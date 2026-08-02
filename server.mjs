@@ -484,7 +484,14 @@ setInterval(() => {
 }, 10 * 60 * 1000).unref();
 
 app.use("/vendor/hls.min.js", express.static(path.join(__dirname, "node_modules/hls.js/dist/hls.min.js")));
-app.use(express.static(path.join(__dirname, "public"), { maxAge: "1h" }));
+app.use(express.static(path.join(__dirname, "public"), {
+  maxAge: "1h",
+  setHeaders(res, filePath) {
+    if (/\/(index\.html|app\.js|styles\.css|sw\.js)$/.test(filePath)) {
+      res.setHeader("cache-control", "no-cache, no-store, must-revalidate");
+    }
+  }
+}));
 app.get("/{*path}", (_req, res) => res.sendFile(path.join(__dirname, "public/index.html")));
 app.use((error, _req, res, _next) => res.status(500).json({ error: error?.message || "Erro interno." }));
 
