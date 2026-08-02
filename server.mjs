@@ -149,6 +149,15 @@ function safeLabel(value, fallback = "Sem nome") {
   return String(value || fallback).replace(/[<>]/g, "").slice(0, 160);
 }
 
+function safeText(value, maxLength = 1200) {
+  return String(value || "")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/[\u0000-\u001F\u007F]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, maxLength);
+}
+
 function normalizeBaseUrl(value) {
   const parsed = new URL(String(value || "").trim());
   parsed.pathname = parsed.pathname.replace(/\/+$/, "");
@@ -182,7 +191,7 @@ function streamTypeFor(url, fallback = "auto") {
   return fallback;
 }
 
-function proxiedItem({ id, name, group, logo, url, streamType, seriesId, sessionId, season }) {
+function proxiedItem({ id, name, group, logo, url, streamType, seriesId, sessionId, season, description, rating, year, genre, epgChannelId }) {
   return {
     ...(id != null ? { id: String(id) } : {}),
     name: safeLabel(name),
@@ -192,7 +201,12 @@ function proxiedItem({ id, name, group, logo, url, streamType, seriesId, session
     streamType: streamType || (url ? streamTypeFor(url) : "auto"),
     ...(seriesId != null ? { seriesId: String(seriesId) } : {}),
     ...(sessionId ? { sessionId } : {}),
-    ...(season != null ? { season: Number(season) || 0 } : {})
+    ...(season != null ? { season: Number(season) || 0 } : {}),
+    ...(description ? { description: safeText(description) } : {}),
+    ...(rating ? { rating: safeLabel(rating, "") } : {}),
+    ...(year ? { year: safeLabel(year, "") } : {}),
+    ...(genre ? { genre: safeLabel(genre, "") } : {}),
+    ...(epgChannelId ? { epgChannelId: safeLabel(epgChannelId, "") } : {})
   };
 }
 
@@ -209,7 +223,8 @@ function parseM3u(text, limit = MAX_CATALOG_ITEMS) {
       metadata = {
         name: safeLabel(attr("tvg-name") || title),
         group: safeLabel(attr("group-title") || "Outros"),
-        logo: attr("tvg-logo")
+        logo: attr("tvg-logo"),
+        epgChannelId: attr("tvg-id")
       };
     } else if (metadata && /^(https?:\/\/)/i.test(line)) {
       const group = metadata.group.toLowerCase();
@@ -259,6 +274,7 @@ async function connectXtream({ serverUrl, username, password, source = "xtream" 
     name: item.name,
     logo: item.stream_icon,
     group: liveCategories.get(String(item.category_id)) || item.category_name || "Ao vivo",
+    epgChannelId: item.epg_channel_id,
     url: `${base}/live/${encodeURIComponent(username)}/${encodeURIComponent(password)}/${item.stream_id}.${extension}`,
     streamType: extension === "m3u8" ? "hls" : "mpegts"
   }));
@@ -278,6 +294,32 @@ async function connectXtream({ serverUrl, username, password, source = "xtream" 
   };
 }
 
+function maybeDecodeBase64(value) {
+  const text = String(value || "").trim();
+  if (!text || text.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(text)) return text;
+  try {
+    const decoded = Buffer.from(text, "base64").toString("utf8");
+    if (!decoded || decoded.includes("\uFFFD") || /[\u0000-\u0008]/.test(decoded)) return text;
+    return decoded;
+  } catch { return text; }
+}
+
+function epgTimestamp(value) {
+  const numeric = Number(value);
+  if (Number.isFinite(numeric) && numeric > 0) return new Date(numeric < 10_000_000_000 ? numeric * 1000 : numeric).toISOString();
+  const date = new Date(String(value || ""));
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+function normalizeEpgListing(listing) {
+  return {
+    title: safeText(maybeDecodeBase64(listing?.title) || "Programação não informada", 220),
+    description: safeText(maybeDecodeBase64(listing?.description), 600),
+    start: epgTimestamp(listing?.start_timestamp || listing?.start),
+    end: epgTimestamp(listing?.stop_timestamp || listing?.end)
+  };
+}
+
 function getXtreamSession(sessionId) {
   const session = xtreamSessions.get(String(sessionId || ""));
   if (!session || session.expiresAt <= Date.now()) throw new Error("A sessão da lista expirou. Conecte a lista novamente.");
@@ -294,7 +336,7 @@ function rewriteManifest(text, baseUrl) {
   }).join("\n");
 }
 
-app.get("/health", (_req, res) => res.json({ ok: true, service: "gate-iptv-player", version: "0.3.1" }));
+app.get("/health", (_req, res) => res.json({ ok: true, service: "gate-iptv-player", version: "0.3.2" }));
 app.get("/api/config", (_req, res) => res.json({ annualPrice: 30, adDurationSeconds: 10, paymentAvailable: Boolean(process.env.PAYMENT_LINK_URL) }));
 
 app.post("/api/m3u/parse", async (req, res) => {
@@ -349,7 +391,11 @@ app.post("/api/xtream/catalog", async (req, res) => {
         id: kind === "movies" ? item.stream_id : item.series_id,
         name: item.name,
         logo: kind === "movies" ? item.stream_icon : item.cover,
-        group: categories.get(String(item.category_id)) || item.category_name || (kind === "movies" ? "Filmes" : "Séries")
+        group: categories.get(String(item.category_id)) || item.category_name || (kind === "movies" ? "Filmes" : "Séries"),
+        description: item.plot || item.description || item.info?.plot,
+        rating: item.rating || item.rating_5based,
+        year: item.year || item.releaseDate || item.releasedate,
+        genre: item.genre
       };
       if (kind === "movies") {
         const extension = String(item.container_extension || "mp4").replace(/[^a-z0-9]/gi, "") || "mp4";
@@ -360,6 +406,37 @@ app.post("/api/xtream/catalog", async (req, res) => {
     return res.json({ kind, total: rawItems.length, loaded: items.length, items });
   } catch (error) {
     return res.status(422).json({ error: error.message || "Não foi possível carregar este catálogo." });
+  }
+});
+
+app.post("/api/xtream/epg", async (req, res) => {
+  try {
+    const session = getXtreamSession(req.body?.sessionId);
+    const streamIds = [...new Set((Array.isArray(req.body?.streamIds) ? req.body.streamIds : [])
+      .map((value) => String(value || "").replace(/[^0-9]/g, ""))
+      .filter(Boolean))].slice(0, 10);
+    if (!streamIds.length) return res.json({ items: {} });
+    const results = await Promise.allSettled(streamIds.map(async (streamId) => {
+      const url = `${xtreamApi(session.base, session.username, session.password, "get_short_epg")}&stream_id=${encodeURIComponent(streamId)}&limit=3`;
+      const payload = await safeFetch(url, { maxBytes: 1_500_000, asJson: true, timeoutMs: 20_000 });
+      const listings = (Array.isArray(payload?.epg_listings) ? payload.epg_listings : Array.isArray(payload) ? payload : [])
+        .map(normalizeEpgListing)
+        .filter((item) => item.title)
+        .sort((a, b) => String(a.start || "").localeCompare(String(b.start || "")));
+      const now = Date.now();
+      const currentIndex = listings.findIndex((item) => {
+        const start = item.start ? new Date(item.start).getTime() : 0;
+        const end = item.end ? new Date(item.end).getTime() : Number.POSITIVE_INFINITY;
+        return start <= now && now < end;
+      });
+      const current = listings[currentIndex >= 0 ? currentIndex : 0] || null;
+      const next = listings[currentIndex >= 0 ? currentIndex + 1 : 1] || null;
+      return [streamId, { current, next }];
+    }));
+    const items = Object.fromEntries(results.filter((result) => result.status === "fulfilled").map((result) => result.value));
+    return res.json({ items });
+  } catch (error) {
+    return res.status(422).json({ error: error.message || "Não foi possível carregar o guia dos canais." });
   }
 });
 
@@ -377,11 +454,20 @@ app.post("/api/xtream/series", async (req, res) => {
         group: `Temporada ${season}`,
         season,
         logo: info?.info?.cover,
+        description: episode.info?.plot || episode.plot || info?.info?.plot,
+        rating: episode.info?.rating || info?.info?.rating,
+        year: episode.info?.releasedate || info?.info?.releaseDate,
         url: `${session.base}/series/${encodeURIComponent(session.username)}/${encodeURIComponent(session.password)}/${episode.id}.${extension}`,
         streamType: extension === "m3u8" ? "hls" : "video"
       });
     }));
-    return res.json({ name: safeLabel(info?.info?.name || "Série"), episodes: episodes.slice(0, 700) });
+    return res.json({
+      name: safeLabel(info?.info?.name || "Série"),
+      description: safeText(info?.info?.plot || info?.info?.description),
+      rating: safeLabel(info?.info?.rating || "", ""),
+      genre: safeLabel(info?.info?.genre || "", ""),
+      episodes: episodes.slice(0, 700)
+    });
   } catch (error) {
     return res.status(422).json({ error: error.message || "Não foi possível carregar os episódios." });
   }
