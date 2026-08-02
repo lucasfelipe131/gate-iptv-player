@@ -11,6 +11,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const port = Number(process.env.PORT || 3000);
 const MAX_CATALOG_ITEMS = 2000;
+const MAX_LIVE_ITEMS = 6000;
 const SESSION_TTL = 6 * 60 * 60 * 1000;
 
 app.disable("x-powered-by");
@@ -253,7 +254,7 @@ async function connectXtream({ serverUrl, username, password, source = "xtream" 
   const extension = account.user_info.allowed_output_formats?.includes("m3u8") ? "m3u8" : "ts";
   const sessionId = crypto.randomBytes(18).toString("base64url");
   xtreamSessions.set(sessionId, { base, username, password, expiresAt: Date.now() + SESSION_TTL });
-  const channels = live.slice(0, MAX_CATALOG_ITEMS).map((item) => proxiedItem({
+  const channels = live.slice(0, MAX_LIVE_ITEMS).map((item) => proxiedItem({
     id: item.stream_id,
     name: item.name,
     logo: item.stream_icon,
@@ -293,7 +294,7 @@ function rewriteManifest(text, baseUrl) {
   }).join("\n");
 }
 
-app.get("/health", (_req, res) => res.json({ ok: true, service: "gate-iptv-player", version: "0.2.0" }));
+app.get("/health", (_req, res) => res.json({ ok: true, service: "gate-iptv-player", version: "0.2.2" }));
 app.get("/api/config", (_req, res) => res.json({ annualPrice: 30, adDurationSeconds: 10, paymentAvailable: Boolean(process.env.PAYMENT_LINK_URL) }));
 
 app.post("/api/m3u/parse", async (req, res) => {
