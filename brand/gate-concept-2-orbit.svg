@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 240" role="img" aria-label="GATE IPTV PLAYER conceito Orbit">
+  <defs><linearGradient id="o" x1="35" y1="35" x2="195" y2="205" gradientUnits="userSpaceOnUse"><stop stop-color="#52E5FF"/><stop offset="1" stop-color="#2463F1"/></linearGradient></defs>
+  <rect width="720" height="240" rx="36" fill="#06101F"/>
+  <circle cx="130" cy="120" r="74" fill="none" stroke="url(#o)" stroke-width="18" stroke-dasharray="330 135" stroke-linecap="round" transform="rotate(-32 130 120)"/>
+  <path fill="#fff" d="m112 78 72 42-72 42V78Z"/>
+  <circle cx="188" cy="63" r="8" fill="#fff"/>
+  <text x="265" y="112" fill="#fff" font-family="Arial, sans-serif" font-size="72" font-weight="800" letter-spacing="8">GATE</text>
+  <text x="271" y="156" fill="#39CFFF" font-family="Arial, sans-serif" font-size="22" font-weight="700" letter-spacing="10">IPTV PLAYER</text>
+</svg>

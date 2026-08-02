@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 240" role="img" aria-label="GATE IPTV PLAYER conceito Portal">
+  <defs>
+    <linearGradient id="b" x1="28" y1="24" x2="210" y2="216" gradientUnits="userSpaceOnUse"><stop stop-color="#37D8FF"/><stop offset=".48" stop-color="#168BFF"/><stop offset="1" stop-color="#3157E8"/></linearGradient>
+  </defs>
+  <rect width="720" height="240" rx="36" fill="#06101F"/>
+  <g transform="translate(34 18) scale(1.6)"><path fill="url(#b)" d="M64 7 113 35v57l-20 12V47L64 30 35 47v57L15 92V35L64 7Z"/><path fill="#fff" d="M49 43.5v41L84.5 64 49 43.5Z"/><path fill="none" stroke="#fff" stroke-linecap="round" stroke-width="3" opacity=".28" d="M27 42 64 20l37 22"/></g>
+  <text x="265" y="112" fill="#fff" font-family="Arial, sans-serif" font-size="72" font-weight="800" letter-spacing="8">GATE</text>
+  <text x="271" y="156" fill="#39CFFF" font-family="Arial, sans-serif" font-size="22" font-weight="700" letter-spacing="10">IPTV PLAYER</text>
+</svg>
