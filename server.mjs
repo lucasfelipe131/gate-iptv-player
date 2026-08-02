@@ -170,17 +170,48 @@ const streamTickets = new Map();
 const streamTicketByUrl = new Map();
 const xtreamSessions = new Map();
 
-function registerStream(remoteUrl) {
+function registerStream(remoteUrl, kind = "media") {
   const url = String(remoteUrl || "").trim();
   if (!url) return "";
-  const existingToken = streamTicketByUrl.get(url);
+  const ticketKey = `${kind}:${url}`;
+  const existingToken = streamTicketByUrl.get(ticketKey);
   const existing = existingToken && streamTickets.get(existingToken);
   if (existing && existing.expiresAt > Date.now()) return `/api/stream/${existingToken}`;
   const token = crypto.randomBytes(18).toString("base64url");
-  const entry = { url, expiresAt: Date.now() + SESSION_TTL };
+  const entry = { url, kind, ticketKey, expiresAt: Date.now() + SESSION_TTL };
   streamTickets.set(token, entry);
-  streamTicketByUrl.set(url, token);
+  streamTicketByUrl.set(ticketKey, token);
   return `/api/stream/${token}`;
+}
+
+function imageContentType(rawUrl, reportedType = "") {
+  if (/^image\/(?:avif|bmp|gif|jpe?g|png|svg\+xml|webp|x-icon)/i.test(reportedType)) {
+    return reportedType;
+  }
+  const pathname = (() => {
+    try { return new URL(String(rawUrl || "")).pathname.toLowerCase(); }
+    catch { return String(rawUrl || "").toLowerCase(); }
+  })();
+  if (/\.png$/.test(pathname)) return "image/png";
+  if (/\.webp$/.test(pathname)) return "image/webp";
+  if (/\.gif$/.test(pathname)) return "image/gif";
+  if (/\.svg$/.test(pathname)) return "image/svg+xml";
+  if (/\.avif$/.test(pathname)) return "image/avif";
+  if (/\.ico$/.test(pathname)) return "image/x-icon";
+  return "image/jpeg";
+}
+
+function detectedImageContentType(bytes, rawUrl, reportedType = "") {
+  if (bytes?.length >= 12) {
+    if (bytes[0] === 0xFF && bytes[1] === 0xD8 && bytes[2] === 0xFF) return "image/jpeg";
+    if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4E && bytes[3] === 0x47) return "image/png";
+    if (bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x38) return "image/gif";
+    if (bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46
+      && bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50) return "image/webp";
+    const beginning = new TextDecoder().decode(bytes.slice(0, 320)).trimStart();
+    if (beginning.startsWith("<svg") || beginning.startsWith("<?xml") && beginning.includes("<svg")) return "image/svg+xml";
+  }
+  return imageContentType(rawUrl, reportedType);
 }
 
 function streamTypeFor(url, fallback = "auto") {
@@ -196,7 +227,7 @@ function proxiedItem({ id, name, group, logo, url, streamType, seriesId, session
     ...(id != null ? { id: String(id) } : {}),
     name: safeLabel(name),
     group: safeLabel(group || "Outros"),
-    logo: logo ? registerStream(String(logo).slice(0, 1800)) : "",
+    logo: logo ? registerStream(String(logo).slice(0, 1800), "image") : "",
     playUrl: url ? registerStream(url) : "",
     streamType: streamType || (url ? streamTypeFor(url) : "auto"),
     ...(seriesId != null ? { seriesId: String(seriesId) } : {}),
@@ -336,7 +367,7 @@ function rewriteManifest(text, baseUrl) {
   }).join("\n");
 }
 
-app.get("/health", (_req, res) => res.json({ ok: true, service: "gate-iptv-player", version: "0.4.0" }));
+app.get("/health", (_req, res) => res.json({ ok: true, service: "gate-iptv-player", version: "0.4.1" }));
 app.get("/api/config", (_req, res) => res.json({ annualPrice: 30, adDurationSeconds: 10, paymentAvailable: Boolean(process.env.PAYMENT_LINK_URL) }));
 
 app.post("/api/m3u/parse", async (req, res) => {
@@ -504,7 +535,9 @@ app.get("/api/stream/:token", async (req, res) => {
   if (!entry || entry.expiresAt <= Date.now()) return res.status(404).json({ error: "Este link de reprodução expirou. Conecte a lista novamente." });
   entry.expiresAt = Date.now() + SESSION_TTL;
   try {
-    const headers = {};
+    const headers = entry.kind === "image"
+      ? { accept: "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8" }
+      : {};
     if (req.headers.range) headers.range = req.headers.range;
     const remote = await openRemote(entry.url, { headers, timeoutMs: 25_000 });
     const response = remote.response;
@@ -512,7 +545,18 @@ app.get("/api/stream/:token", async (req, res) => {
       remote.clearTimer();
       return res.status(response.status).json({ error: `A fonte recusou a reprodução (${response.status}).` });
     }
-    const contentType = response.headers.get("content-type") || "application/octet-stream";
+    const reportedType = response.headers.get("content-type") || "";
+    if (entry.kind === "image") {
+      try {
+        const bytes = await readLimited(response, 12_000_000);
+        res.status(response.status);
+        res.setHeader("cache-control", "private, max-age=1800");
+        res.setHeader("content-type", detectedImageContentType(bytes, remote.finalUrl || entry.url, reportedType));
+        res.send(Buffer.from(bytes));
+      } finally { remote.clearTimer(); }
+      return;
+    }
+    const contentType = reportedType || "application/octet-stream";
     const manifest = /mpegurl|m3u8/i.test(contentType) || /\.m3u8($|\?)/i.test(remote.finalUrl.toString());
     res.status(response.status);
     res.setHeader("cache-control", "no-store");
@@ -564,7 +608,7 @@ app.post("/api/renewals", (req, res) => {
 setInterval(() => {
   const now = Date.now();
   for (const [token, entry] of streamTickets) {
-    if (entry.expiresAt <= now) { streamTickets.delete(token); streamTicketByUrl.delete(entry.url); }
+    if (entry.expiresAt <= now) { streamTickets.delete(token); streamTicketByUrl.delete(entry.ticketKey || `media:${entry.url}`); }
   }
   for (const [id, session] of xtreamSessions) if (session.expiresAt <= now) xtreamSessions.delete(id);
   for (const [key, times] of requestBuckets) if (!times.some((time) => now - time < 60_000)) requestBuckets.delete(key);

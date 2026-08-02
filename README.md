@@ -1,6 +1,6 @@
 # GATE IPTV PLAYER
 
-Player web/PWA otimizado para navegação por controle remoto em Smart TVs. O aplicativo não fornece conteúdo: cada usuário conecta apenas fontes e listas que tenha autorização para utilizar.
+Player web/PWA responsivo para navegadores, BlueStacks e navegação por controle remoto em Smart TVs. O aplicativo não fornece conteúdo: cada usuário conecta apenas fontes e listas que tenha autorização para utilizar.
 
 ## Recursos do MVP
 
@@ -10,7 +10,10 @@ Player web/PWA otimizado para navegação por controle remoto em Smart TVs. O ap
 - plano anual sem anúncios de R$ 30;
 - conexão Xtream Codes;
 - listas M3U/M3U8 por URL ou arquivo local;
-- reprodução HLS e links diretos;
+- cards de canais, filmes e séries com capas, sinopses e fallback visual;
+- tela de detalhes em dois cliques para filmes e séries;
+- reprodução HLS adaptativa preservando a melhor qualidade disponível;
+- layout adaptável a HD, Full HD, 4K, mouse, toque e controle remoto;
 - validação de Portal/Ministra por URL e MAC;
 - solicitação de renovação por MAC;
 - PWA instalável.

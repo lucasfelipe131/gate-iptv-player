@@ -1,6 +1,6 @@
 {
   "name": "gate-iptv-player",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "private": true,
   "type": "module",
   "description": "GATE IPTV PLAYER — player de mídia para Smart TVs e fontes autorizadas.",
