@@ -2,11 +2,15 @@
   "name": "GATE IPTV PLAYER",
   "short_name": "GATE Player",
   "description": "Player de mídia para Smart TVs e fontes autorizadas.",
-  "start_url": "/",
+  "id": "/",
+  "start_url": "/?platform=webapp",
+  "scope": "/",
   "display": "standalone",
+  "display_override": ["standalone", "minimal-ui", "browser"],
   "background_color": "#07101f",
   "theme_color": "#07101f",
-  "orientation": "landscape",
+  "orientation": "any",
+  "categories": ["entertainment", "video"],
   "icons": [
     { "src": "/gate-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
   ]

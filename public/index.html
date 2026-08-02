@@ -7,7 +7,7 @@
   <meta name="description" content="GATE IPTV PLAYER — conecte suas próprias fontes autorizadas em Smart TVs." />
   <link rel="icon" href="/gate-icon.svg" />
   <link rel="manifest" href="/manifest.webmanifest" />
-  <link rel="stylesheet" href="/styles.css?v=0.4.0" />
+  <link rel="stylesheet" href="/styles.css?v=0.4.1" />
   <title>GATE IPTV PLAYER</title>
 </head>
 <body>
@@ -88,6 +88,28 @@
     </div>
   </section>
 
+  <section class="modal details-modal hidden" id="details-modal" role="dialog" aria-modal="true" aria-labelledby="details-title">
+    <article class="details-card">
+      <div class="details-backdrop" id="details-backdrop" aria-hidden="true"></div>
+      <button class="details-close focusable" id="details-close" data-focusable aria-label="Fechar detalhes">×</button>
+      <div class="details-content">
+        <div class="details-poster-wrap">
+          <img class="details-poster" id="details-poster" src="/gate-icon.svg" alt="" />
+        </div>
+        <div class="details-copy">
+          <p class="eyebrow" id="details-kind">FILME</p>
+          <h2 id="details-title">Detalhes</h2>
+          <div class="details-meta" id="details-meta"></div>
+          <p class="details-synopsis" id="details-synopsis">Sinopse não informada pela lista.</p>
+          <div class="button-row">
+            <button class="primary-button details-primary focusable" id="details-primary" data-focusable>Assistir</button>
+            <button class="secondary-button focusable" id="details-cancel" data-focusable>Voltar</button>
+          </div>
+        </div>
+      </div>
+    </article>
+  </section>
+
   <section class="ad-overlay hidden" id="ad-overlay" aria-live="polite">
     <div class="ad-badge">PUBLICIDADE</div>
     <div class="ad-content">
@@ -101,7 +123,7 @@
   </section>
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
-  <script src="/vendor/hls.min.js?v=0.4.0"></script>
-  <script src="/app.js?v=0.4.0"></script>
+  <script src="/vendor/hls.min.js?v=0.4.1"></script>
+  <script src="/app.js?v=0.4.1"></script>
 </body>
 </html>

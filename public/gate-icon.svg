@@ -1,4 +1,12 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="GATE IPTV PLAYER">
-  <path fill="#165dff" d="M64 8 18 34v60l18 10V45l28-16 28 16v59l18-10V34L64 8Z"/>
-  <path fill="#b7ff24" d="M49 44v40l34-20-34-20Z"/>
+  <defs>
+    <linearGradient id="gateBlue" x1="18" y1="18" x2="108" y2="108" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#37D8FF"/>
+      <stop offset=".48" stop-color="#168BFF"/>
+      <stop offset="1" stop-color="#3157E8"/>
+    </linearGradient>
+  </defs>
+  <path fill="url(#gateBlue)" d="M64 7 113 35v57l-20 12V47L64 30 35 47v57L15 92V35L64 7Z"/>
+  <path fill="#fff" d="M49 43.5v41L84.5 64 49 43.5Z"/>
+  <path fill="none" stroke="#fff" stroke-linecap="round" stroke-width="3" opacity=".28" d="M27 42 64 20l37 22"/>
 </svg>

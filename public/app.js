@@ -20,6 +20,9 @@ const state = {
   hls: null,
   previewHls: null,
   selectedLive: null,
+  detailsItem: null,
+  detailsKind: null,
+  detailsReturnFocus: null,
   currentItem: null,
   lastFocused: null,
   adFree: localStorage.getItem("gate.adFree") === "true"
@@ -28,6 +31,10 @@ const state = {
 const main = document.querySelector("#main-content");
 const sourceModal = document.querySelector("#source-modal");
 const playerModal = document.querySelector("#player-modal");
+const detailsModal = document.querySelector("#details-modal");
+const detailsPoster = document.querySelector("#details-poster");
+const detailsBackdrop = document.querySelector("#details-backdrop");
+const detailsPrimary = document.querySelector("#details-primary");
 const sourceStatus = document.querySelector("#source-status");
 const video = document.querySelector("#video-player");
 const playerStatus = document.querySelector("#player-status");
@@ -182,7 +189,6 @@ function mediaRow(items, kind) {
 }
 
 function mediaCard(item, kind) {
-  const style = item.logo ? ` style="background-image:linear-gradient(transparent,rgba(4,8,15,.9)),url('${escapeHtml(item.logo)}')"` : "";
   const playable = Boolean(item.playUrl);
   const seriesData = item.seriesId ? ` data-series-id="${escapeHtml(item.seriesId)}" data-session-id="${escapeHtml(item.sessionId || state.sessionId || "")}"` : "";
   const description = item.description || "";
@@ -195,8 +201,9 @@ function mediaCard(item, kind) {
   const extra = kind === "live"
     ? `<span class="card-epg card-now">${escapeHtml(current)}</span><span class="card-epg card-next">${escapeHtml(next)}</span>`
     : `<p class="card-synopsis">${escapeHtml(description || "Sinopse não informada pela lista.")}</p>`;
-  return `<button class="media-card focusable kind-${escapeHtml(kind)} ${item.logo ? "has-image" : ""}" data-focusable${playable ? ` data-play-url="${escapeHtml(item.playUrl)}" data-stream-type="${escapeHtml(item.streamType || "auto")}"` : ""}${seriesData}${detailsData}${liveData} data-play-name="${escapeHtml(item.name)}"${style}>
-    <span class="play-dot">${item.seriesId ? "＋" : "▶"}</span><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(metadata)}</small>${extra}</button>`;
+  const artwork = item.logo ? `<img class="card-artwork" src="${escapeHtml(item.logo)}" alt="" loading="lazy" decoding="async">` : "";
+  return `<button class="media-card focusable kind-${escapeHtml(kind)} ${item.logo ? "has-image" : "cover-missing"}" data-focusable data-item-kind="${escapeHtml(kind)}"${playable ? ` data-play-url="${escapeHtml(item.playUrl)}" data-stream-type="${escapeHtml(item.streamType || "auto")}"` : ""}${seriesData}${detailsData}${liveData} data-play-name="${escapeHtml(item.name)}">
+    ${artwork}<span class="play-dot">${item.seriesId ? "＋" : "▶"}</span><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(metadata)}</small>${extra}</button>`;
 }
 
 function formatProgramTime(value) {
@@ -524,6 +531,53 @@ function closeSource() {
   sourceStatus.className = "form-status";
 }
 
+function openDetails(item, kind) {
+  if (!item) return;
+  state.detailsItem = item;
+  state.detailsKind = kind;
+  state.detailsReturnFocus = document.activeElement;
+  const isSeries = kind === "series";
+  document.querySelector("#details-kind").textContent = isSeries ? "SÉRIE" : "FILME";
+  document.querySelector("#details-title").textContent = item.name || (isSeries ? "Série" : "Filme");
+  document.querySelector("#details-synopsis").textContent = item.description || "Sinopse não informada pela lista.";
+  const metadata = [item.year, item.genre || item.group, item.rating ? `★ ${item.rating}` : ""]
+    .filter(Boolean)
+    .map((value) => `<span>${escapeHtml(value)}</span>`)
+    .join("");
+  document.querySelector("#details-meta").innerHTML = metadata || "<span>Informações da lista</span>";
+  detailsPoster.classList.remove("fallback");
+  detailsPoster.src = item.logo || "/gate-icon.svg";
+  detailsPoster.alt = item.logo ? `Capa de ${item.name || "conteúdo"}` : "";
+  detailsBackdrop.style.backgroundImage = item.logo ? `url(${JSON.stringify(item.logo)})` : "none";
+  detailsPrimary.textContent = isSeries ? "Ver episódios" : "Assistir";
+  detailsModal.classList.remove("hidden");
+  refreshFocusable();
+  setTimeout(() => detailsPrimary.focus(), 30);
+}
+
+function closeDetails(restoreFocus = true) {
+  detailsModal.classList.add("hidden");
+  const returnFocus = state.detailsReturnFocus;
+  state.detailsItem = null;
+  state.detailsKind = null;
+  state.detailsReturnFocus = null;
+  if (restoreFocus) returnFocus?.focus?.();
+}
+
+function confirmDetails() {
+  const item = state.detailsItem;
+  const kind = state.detailsKind;
+  const returnFocus = state.detailsReturnFocus;
+  if (!item) return;
+  closeDetails(false);
+  if (kind === "series") {
+    openSeries(item);
+    return;
+  }
+  playStream(item);
+  state.lastFocused = returnFocus;
+}
+
 function selectSourceTab(name) {
   document.querySelectorAll("[data-source-tab]").forEach((tab) => tab.classList.toggle("active", tab.dataset.sourceTab === name));
   document.querySelectorAll(".source-form").forEach((form) => form.classList.toggle("hidden", form.id !== `${name}-form`));
@@ -578,13 +632,47 @@ function hlsErrorMessage(data) {
   return "O canal não respondeu. Tente novamente ou escolha outro canal.";
 }
 
+function adaptiveHlsOptions(preview = false) {
+  return {
+    startLevel: -1,
+    capLevelToPlayerSize: true,
+    enableWorker: true,
+    lowLatencyMode: true,
+    backBufferLength: preview ? 15 : 30,
+    maxBufferLength: preview ? 20 : 36,
+    maxMaxBufferLength: preview ? 36 : 72,
+    abrBandWidthFactor: .9,
+    abrBandWidthUpFactor: .75,
+    abrEwmaDefaultEstimate: 5_000_000,
+    manifestLoadingTimeOut: 20_000,
+    levelLoadingTimeOut: 20_000,
+    fragLoadingTimeOut: 25_000
+  };
+}
+
+function qualityLabel(height) {
+  const pixels = Number(height || 0);
+  if (pixels >= 2160) return "4K";
+  if (pixels >= 1440) return "QHD";
+  if (pixels >= 1080) return "Full HD";
+  if (pixels >= 720) return "HD";
+  return pixels ? `${pixels}p` : "Automática";
+}
+
+function updatePlayerQuality(height) {
+  const detail = document.querySelector("#player-detail");
+  if (!detail) return;
+  const source = state.currentItem?.group || "Fonte conectada pelo usuário";
+  detail.textContent = `${source} · ${qualityLabel(height)}`;
+}
+
 async function playStream(itemOrUrl, name = "Reproduzindo", streamType = "auto") {
   const item = typeof itemOrUrl === "string" ? { playUrl: itemOrUrl, name, streamType } : itemOrUrl;
   if (!item?.playUrl) return;
   state.lastFocused = document.activeElement;
   state.currentItem = item;
   document.querySelector("#player-title").textContent = item.name || name;
-  document.querySelector("#player-detail").textContent = item.group || "Fonte conectada pelo usuário";
+  updatePlayerQuality(0);
   const playerDescription = document.querySelector("#player-description");
   if (playerDescription) {
     const epgDescription = item.id ? state.epg.get(String(item.id))?.current?.description : "";
@@ -606,13 +694,16 @@ async function playStream(itemOrUrl, name = "Reproduzindo", streamType = "auto")
     return;
   }
   if (type === "hls" && window.Hls?.isSupported()) {
-    const hls = new window.Hls({ maxBufferLength: 24, maxMaxBufferLength: 48, enableWorker: true, manifestLoadingTimeOut: 20_000, levelLoadingTimeOut: 20_000, fragLoadingTimeOut: 25_000 });
+    const hls = new window.Hls(adaptiveHlsOptions());
     state.hls = hls;
     let networkRetries = 0;
     let mediaRetries = 0;
     hls.on(window.Hls.Events.MANIFEST_PARSED, () => {
       showPlayerStatus("Sinal encontrado. Iniciando reprodução…");
       video.play().catch(() => showPlayerStatus("Pressione OK ou Play para iniciar.", "ready"));
+    });
+    hls.on(window.Hls.Events.LEVEL_SWITCHED, (_event, data) => {
+      updatePlayerQuality(hls.levels?.[data.level]?.height || video.videoHeight);
     });
     hls.on(window.Hls.Events.ERROR, (_event, data) => {
       if (!data.fatal) return;
@@ -673,7 +764,7 @@ function playLivePreview(item) {
   preview.removeAttribute("src");
   preview.load();
   if (item.streamType === "hls" && window.Hls?.isSupported()) {
-    state.previewHls = new window.Hls({ maxBufferLength: 18, maxMaxBufferLength: 32, enableWorker: true });
+    state.previewHls = new window.Hls(adaptiveHlsOptions(true));
     state.previewHls.loadSource(item.playUrl);
     state.previewHls.attachMedia(preview);
     state.previewHls.on(window.Hls.Events.MANIFEST_PARSED, () => preview.play().catch(() => {}));
@@ -818,21 +909,40 @@ function bindDynamicActions() {
       if (item) playLivePreview(item);
     });
   });
-  main.querySelectorAll("[data-play-url]:not([data-action-bound])").forEach((button) => {
+  main.querySelectorAll(".media-card:not([data-action-bound])").forEach((button) => {
     button.dataset.actionBound = "true";
-    button.addEventListener("click", () => playStream({ id: button.dataset.itemId, playUrl: button.dataset.playUrl, name: button.dataset.playName, group: button.querySelector("small")?.textContent, description: button.dataset.description, streamType: button.dataset.streamType || "auto" }));
-  });
-  main.querySelectorAll("[data-series-id]:not([data-action-bound])").forEach((button) => {
-    button.dataset.actionBound = "true";
-    button.addEventListener("click", () => openSeries({ seriesId: button.dataset.seriesId, sessionId: button.dataset.sessionId, name: button.dataset.playName, description: button.dataset.description }));
+    button.querySelector(".card-artwork")?.addEventListener("error", () => button.classList.add("cover-missing"), { once: true });
+    button.addEventListener("click", () => {
+      const kind = button.dataset.itemKind || state.view;
+      const item = currentItems(kind).find((entry) => String(entry.id || entry.seriesId || "") === String(button.dataset.itemId || button.dataset.seriesId || "")) || {
+        id: button.dataset.itemId,
+        seriesId: button.dataset.seriesId,
+        sessionId: button.dataset.sessionId,
+        playUrl: button.dataset.playUrl,
+        name: button.dataset.playName,
+        group: button.querySelector("small")?.textContent,
+        description: button.dataset.description,
+        streamType: button.dataset.streamType || "auto"
+      };
+      if (kind === "movies" || kind === "series") openDetails(item, kind);
+      else if (item.seriesId) openDetails(item, "series");
+      else if (item.playUrl) playStream(item);
+    });
   });
   main.querySelector("[data-action=back-series]")?.addEventListener("click", () => renderCatalog("series"));
 }
 
 function setupTvEnvironment() {
   const ua = navigator.userAgent || "";
-  const tv = /Tizen|Web0S|WebOS|NetCast|SMART-TV|SmartTV|Android TV|AFT|BRAVIA/i.test(ua);
+  const requestedPlatform = new URLSearchParams(location.search).get("platform") || "";
+  const androidWrapper = /^android(?:tv)?$/i.test(requestedPlatform) || /GATE-IPTV-PLAYER\/\d/i.test(ua);
+  const tv = requestedPlatform.toLowerCase() === "androidtv" || /Tizen|Web0S|WebOS|NetCast|SMART-TV|SmartTV|Android TV|AFT|BRAVIA/i.test(ua);
+  const touch = navigator.maxTouchPoints > 0 || (typeof window.matchMedia === "function" && window.matchMedia("(pointer: coarse)").matches);
   document.body.classList.toggle("tv-optimized", tv);
+  document.body.classList.toggle("browser-mode", !tv);
+  document.body.classList.toggle("android-wrapper", androidWrapper);
+  document.body.classList.toggle("touch-mode", Boolean(touch));
+  document.documentElement.dataset.platform = tv ? "tv" : androidWrapper ? "android-app" : "browser";
   if (window.tizen?.tvinputdevice) {
     try { window.tizen.tvinputdevice.registerKeyBatch(["MediaPlay", "MediaPause", "MediaPlayPause", "MediaStop", "ColorF0Red", "ColorF1Green"]); } catch {}
   }
@@ -850,7 +960,13 @@ function cryptoRandom(length) {
 }
 
 let focusables = [];
-function refreshFocusable() { focusables = [...document.querySelectorAll("[data-focusable]:not(.hidden):not([disabled])")].filter((element) => element.offsetParent !== null); }
+function activeFocusScope() {
+  if (!playerModal.classList.contains("hidden")) return playerModal;
+  if (!detailsModal.classList.contains("hidden")) return detailsModal;
+  if (!sourceModal.classList.contains("hidden")) return sourceModal;
+  return document;
+}
+function refreshFocusable() { focusables = [...activeFocusScope().querySelectorAll("[data-focusable]:not(.hidden):not([disabled])")].filter((element) => element.offsetParent !== null); }
 function moveFocus(direction) {
   refreshFocusable();
   const active = document.activeElement;
@@ -887,6 +1003,7 @@ function showAd() {
 
 video.addEventListener("playing", hidePlayerStatus);
 video.addEventListener("canplay", () => { if (!video.paused) hidePlayerStatus(); });
+video.addEventListener("loadedmetadata", () => updatePlayerQuality(video.videoHeight));
 video.addEventListener("waiting", () => showPlayerStatus("Carregando o sinal…"));
 video.addEventListener("stalled", () => showPlayerStatus("Sinal instável. Reconectando…"));
 video.addEventListener("error", () => showPlayerStatus(video.error?.code === 4 && state.currentItem?.streamType === "mpegts" ? "Esta TV não reproduz MPEG-TS direto. Use a saída M3U8/Xtream do mesmo servidor." : "Não foi possível reproduzir este canal.", "error"));
@@ -907,6 +1024,14 @@ document.addEventListener("click", (event) => {
 document.querySelectorAll("[data-source-tab]").forEach((tab) => tab.addEventListener("click", () => selectSourceTab(tab.dataset.sourceTab)));
 document.querySelector(".close-modal").addEventListener("click", closeSource);
 document.querySelector(".player-close").addEventListener("click", closePlayer);
+document.querySelector("#details-close").addEventListener("click", () => closeDetails());
+document.querySelector("#details-cancel").addEventListener("click", () => closeDetails());
+detailsPrimary.addEventListener("click", confirmDetails);
+detailsPoster.addEventListener("error", () => {
+  detailsPoster.classList.add("fallback");
+  detailsPoster.src = "/gate-icon.svg";
+  detailsBackdrop.style.backgroundImage = "none";
+});
 window.addEventListener("popstate", route);
 document.addEventListener("keydown", (event) => {
   const code = Number(event.keyCode || event.which || 0);
@@ -918,6 +1043,12 @@ document.addEventListener("keydown", (event) => {
     if (playPausePressed) { event.preventDefault(); video.paused ? video.play() : video.pause(); return; }
     if (event.key === "ArrowLeft" || event.key === "ArrowRight") { event.preventDefault(); if (Number.isFinite(video.duration)) video.currentTime = Math.max(0, video.currentTime + (event.key === "ArrowLeft" ? -10 : 10)); return; }
     if (event.key === "ArrowUp" || event.key === "ArrowDown") { event.preventDefault(); video.volume = Math.min(1, Math.max(0, video.volume + (event.key === "ArrowUp" ? .1 : -.1))); return; }
+  }
+  const detailsOpen = !detailsModal.classList.contains("hidden");
+  if (detailsOpen && (backPressed || event.key === "Backspace")) {
+    event.preventDefault();
+    closeDetails();
+    return;
   }
   const directions = { ArrowLeft: "left", ArrowRight: "right", ArrowUp: "up", ArrowDown: "down" };
   if (directions[event.key]) { event.preventDefault(); moveFocus(directions[event.key]); }
