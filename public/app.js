@@ -11,6 +11,8 @@ const state = {
   loadedCatalogs: new Set(),
   catalogPromises: new Map(),
   catalogErrors: new Map(),
+  epg: new Map(),
+  epgPending: new Set(),
   view: "home",
   filter: { query: "", group: "Todos" },
   visibleCount: 36,
@@ -67,10 +69,12 @@ function renderHome() {
   document.title = "GATE IPTV PLAYER";
   if (state.source) {
     main.innerHTML = `${topbar()}
-      <section class="tv-home-head"><div><p class="eyebrow">CONTEÚDO DA SUA LISTA</p><h1>O que deseja assistir?</h1><p>Escolha uma das três opções e pressione OK.</p></div></section>
-      ${renderConnectedSummary()}`;
+      <section class="tv-home-head"><div><p class="eyebrow">CONTEÚDO DA SUA LISTA</p><h1>Escolha e assista.</h1><p>TV ao vivo, filmes e séries organizados em cards.</p></div></section>
+      ${renderConnectedSummary()}
+      ${renderHomePreviews()}`;
     bindDynamicActions();
     refreshFocusable();
+    queueEpgForCards();
     return;
   }
   main.innerHTML = `${topbar()}
@@ -124,6 +128,33 @@ function renderConnectedSummary() {
     </section>`;
 }
 
+function renderHomePreviews() {
+  const sections = [
+    { kind: "live", title: "TV ao vivo", action: "open-live", empty: "Nenhum canal foi carregado." },
+    { kind: "movies", title: "Filmes", action: "open-movies", empty: "Nenhum filme foi carregado." },
+    { kind: "series", title: "Séries", action: "open-series", empty: "Nenhuma série foi carregada." }
+  ];
+
+  return `<div class="home-shelves">${sections.map((section) => {
+    const items = currentItems(section.kind).slice(0, 8);
+    const loading = section.kind !== "live" && Boolean(state.sessionId) && !state.loadedCatalogs.has(section.kind) && !state.catalogErrors.has(section.kind);
+    const error = state.catalogErrors.get(section.kind);
+    const body = loading
+      ? renderPreviewSkeletons(section.kind)
+      : items.length
+        ? `<div class="media-row home-preview-row ${section.kind}">${items.map((item) => mediaCard(item, section.kind)).join("")}</div>`
+        : `<div class="empty-state compact-empty">${escapeHtml(error || section.empty)}</div>`;
+    return `<section class="home-shelf ${section.kind}">
+      <div class="home-shelf-head"><h2>${section.title}</h2><button class="shelf-more focusable" data-action="${section.action}" data-focusable>Ver todos <span>›</span></button></div>
+      ${body}
+    </section>`;
+  }).join("")}</div>`;
+}
+
+function renderPreviewSkeletons(kind) {
+  return `<div class="media-row home-preview-row ${kind}" aria-label="Carregando cards">${Array.from({ length: 6 }, () => '<span class="media-card card-skeleton" aria-hidden="true"><i></i><b></b></span>').join("")}</div>`;
+}
+
 function mediaRow(items, kind) {
   if (!items.length) return `<div class="empty-state">Nenhum item de ${escapeHtml(kind)} foi carregado.</div>`;
   return `<div class="media-row">${items.map((item) => mediaCard(item, kind)).join("")}</div>`;
@@ -133,8 +164,54 @@ function mediaCard(item, kind) {
   const style = item.logo ? ` style="background-image:linear-gradient(transparent,rgba(4,8,15,.9)),url('${escapeHtml(item.logo)}')"` : "";
   const playable = Boolean(item.playUrl);
   const seriesData = item.seriesId ? ` data-series-id="${escapeHtml(item.seriesId)}" data-session-id="${escapeHtml(item.sessionId || state.sessionId || "")}"` : "";
-  return `<button class="media-card focusable ${item.logo ? "has-image" : ""}" data-focusable${playable ? ` data-play-url="${escapeHtml(item.playUrl)}" data-stream-type="${escapeHtml(item.streamType || "auto")}"` : ""}${seriesData} data-play-name="${escapeHtml(item.name)}"${style}>
-    <span class="play-dot">${item.seriesId ? "＋" : "▶"}</span><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.group || kind)}</small></button>`;
+  const description = item.description || "";
+  const detailsData = ` data-item-id="${escapeHtml(item.id || "")}" data-description="${escapeHtml(description)}"`;
+  const liveData = kind === "live" && item.id ? ` data-live-id="${escapeHtml(item.id)}"` : "";
+  const metadata = [item.group || kind, item.year, item.rating ? `★ ${item.rating}` : ""].filter(Boolean).join(" · ");
+  const epg = kind === "live" && item.id ? state.epg.get(String(item.id)) : null;
+  const current = epg?.current?.title ? `Agora · ${epg.current.title}` : item.id ? "Agora · Carregando guia…" : "Guia não informado pela lista";
+  const next = epg?.next?.title ? `Depois · ${epg.next.title}` : "";
+  const extra = kind === "live"
+    ? `<span class="card-epg card-now">${escapeHtml(current)}</span><span class="card-epg card-next">${escapeHtml(next)}</span>`
+    : `<p class="card-synopsis">${escapeHtml(description || "Sinopse não informada pela lista.")}</p>`;
+  return `<button class="media-card focusable kind-${escapeHtml(kind)} ${item.logo ? "has-image" : ""}" data-focusable${playable ? ` data-play-url="${escapeHtml(item.playUrl)}" data-stream-type="${escapeHtml(item.streamType || "auto")}"` : ""}${seriesData}${detailsData}${liveData} data-play-name="${escapeHtml(item.name)}"${style}>
+    <span class="play-dot">${item.seriesId ? "＋" : "▶"}</span><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(metadata)}</small>${extra}</button>`;
+}
+
+function formatProgramTime(value) {
+  const date = new Date(value || "");
+  return Number.isNaN(date.getTime()) ? "" : new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digit" }).format(date);
+}
+
+function updateEpgCards() {
+  main.querySelectorAll("[data-live-id]").forEach((card) => {
+    const entry = state.epg.get(String(card.dataset.liveId));
+    if (!entry) return;
+    const currentTime = formatProgramTime(entry.current?.start);
+    const nextTime = formatProgramTime(entry.next?.start);
+    const now = card.querySelector(".card-now");
+    const next = card.querySelector(".card-next");
+    if (now) now.textContent = entry.current?.title ? `Agora${currentTime ? ` ${currentTime}` : ""} · ${entry.current.title}` : "Programação não informada";
+    if (next) next.textContent = entry.next?.title ? `Depois${nextTime ? ` ${nextTime}` : ""} · ${entry.next.title}` : "";
+  });
+}
+
+async function queueEpgForCards(cards = [...main.querySelectorAll("[data-live-id]")]) {
+  if (!state.sessionId) return;
+  const streamIds = [...new Set(cards.map((card) => String(card.dataset.liveId || "")))]
+    .filter((id) => id && !state.epg.has(id) && !state.epgPending.has(id))
+    .slice(0, 10);
+  if (!streamIds.length) return;
+  streamIds.forEach((id) => state.epgPending.add(id));
+  try {
+    const payload = await api("/api/xtream/epg", { method: "POST", body: JSON.stringify({ sessionId: state.sessionId, streamIds }) });
+    streamIds.forEach((id) => state.epg.set(id, payload.items?.[id] || {}));
+  } catch {
+    streamIds.forEach((id) => state.epg.set(id, {}));
+  } finally {
+    streamIds.forEach((id) => state.epgPending.delete(id));
+    updateEpgCards();
+  }
 }
 
 function currentItems(kind = state.view) {
@@ -149,19 +226,31 @@ function titleFor(kind) {
   return ({ live: "TV ao vivo", movies: "Filmes", series: "Séries", episodes: "Episódios" })[kind] || "Catálogo";
 }
 
-function renderCatalog(kind, heading = "") {
+function filteredCatalogItems(kind) {
+  const items = currentItems(kind);
+  const query = state.filter.query.trim().toLocaleLowerCase("pt-BR");
+  return items.filter((item) => (state.filter.group === "Todos" || item.group === state.filter.group) && (!query || `${item.name} ${item.group || ""}`.toLocaleLowerCase("pt-BR").includes(query)));
+}
+
+let catalogObserver = null;
+let catalogAutoLoading = false;
+
+function renderCatalog(kind, heading = "", description = "") {
+  catalogObserver?.disconnect();
   state.view = kind;
   const items = currentItems(kind);
   const groups = ["Todos", ...new Set(items.map((item) => item.group || "Outros"))].slice(0, 80);
   if (!groups.includes(state.filter.group)) state.filter.group = "Todos";
-  const query = state.filter.query.trim().toLocaleLowerCase("pt-BR");
-  const filtered = items.filter((item) => (state.filter.group === "Todos" || item.group === state.filter.group) && (!query || `${item.name} ${item.group || ""}`.toLocaleLowerCase("pt-BR").includes(query)));
+  const filtered = filteredCatalogItems(kind);
   const visible = filtered.slice(0, state.visibleCount);
   const total = Number(kind === "live" ? state.counts.live : state.counts[kind]) || items.length;
+  const previousFocus = document.activeElement;
+  const restoreSearch = previousFocus?.id === "catalog-search";
+  const focusFirstCard = !restoreSearch && (!previousFocus || previousFocus === document.body || previousFocus.matches?.("[data-action^='open-']"));
   document.title = `${titleFor(kind)} · GATE IPTV PLAYER`;
   main.innerHTML = `${topbar()}
     <section class="catalog-head">
-      <div><p class="eyebrow">${kind === "live" ? "AGORA NA TV" : kind === "episodes" ? "ESCOLHA UM EPISÓDIO" : "SUA BIBLIOTECA"}</p><h1>${escapeHtml(heading || titleFor(kind))}</h1><p>${items.length.toLocaleString("pt-BR")}${total > items.length ? ` de ${total.toLocaleString("pt-BR")}` : ""} itens disponíveis neste aparelho.</p></div>
+      <div><p class="eyebrow">${kind === "live" ? "AGORA NA TV" : kind === "episodes" ? "ESCOLHA UM EPISÓDIO" : "SUA BIBLIOTECA"}</p><h1>${escapeHtml(heading || titleFor(kind))}</h1>${description ? `<p class="catalog-description">${escapeHtml(description)}</p>` : ""}<p>${items.length.toLocaleString("pt-BR")}${total > items.length ? ` de ${total.toLocaleString("pt-BR")}` : ""} itens disponíveis neste aparelho.</p></div>
       <div class="catalog-actions">
         ${kind === "episodes" ? '<button class="secondary-button focusable" data-action="back-series" data-focusable>← Voltar às séries</button>' : ""}
         <button class="secondary-button focusable" data-action="open-source" data-focusable>Trocar lista</button>
@@ -172,10 +261,56 @@ function renderCatalog(kind, heading = "") {
       <span class="result-count">${visible.length.toLocaleString("pt-BR")} de ${filtered.length.toLocaleString("pt-BR")}</span>
     </div>
     <div class="category-row">${groups.map((group) => `<button class="category-chip focusable ${group === state.filter.group ? "active" : ""}" data-group="${escapeHtml(group)}" data-focusable>${escapeHtml(group)}</button>`).join("")}</div>
-    ${filtered.length ? `<section class="catalog-grid ${kind === "movies" || kind === "series" ? "poster-grid" : ""}">${visible.map((item) => mediaCard(item, kind)).join("")}</section>${visible.length < filtered.length ? `<div class="load-more-wrap"><button class="primary-button focusable" data-action="load-more" data-kind="${escapeHtml(kind)}" data-heading="${escapeHtml(heading)}" data-focusable>Mostrar mais ${Math.min(state.pageSize, filtered.length - visible.length).toLocaleString("pt-BR")}</button></div>` : ""}` : '<div class="empty-state">Nenhum item corresponde a esta busca.</div>'}`;
+    ${filtered.length ? `<section class="catalog-grid ${kind === "movies" || kind === "series" ? "poster-grid" : ""}">${visible.map((item) => mediaCard(item, kind)).join("")}</section>${visible.length < filtered.length ? `<div class="catalog-autoload" data-auto-load data-kind="${escapeHtml(kind)}" data-heading="${escapeHtml(heading)}" role="status"><i></i><span>Os próximos cards serão carregados automaticamente</span></div>` : ""}` : '<div class="empty-state">Nenhum item corresponde a esta busca.</div>'}`;
   bindDynamicActions();
-  bindCatalogFilters(kind, heading);
+  bindCatalogFilters(kind, heading, description);
   refreshFocusable();
+  setupAutoPagination(kind, heading);
+  queueEpgForCards();
+  if (restoreSearch) {
+    const search = main.querySelector("#catalog-search");
+    search?.focus();
+    search?.setSelectionRange?.(search.value.length, search.value.length);
+  } else if (focusFirstCard) {
+    setTimeout(() => main.querySelector(".catalog-grid .media-card")?.focus(), 0);
+  }
+}
+
+function setupAutoPagination(kind, heading) {
+  const sentinel = main.querySelector("[data-auto-load]");
+  if (!sentinel || typeof IntersectionObserver === "undefined") return;
+  catalogObserver = new IntersectionObserver((entries) => {
+    if (entries.some((entry) => entry.isIntersecting)) appendNextCatalogPage(kind, heading);
+  }, { rootMargin: "520px 0px" });
+  catalogObserver.observe(sentinel);
+}
+
+function appendNextCatalogPage(kind = state.view, heading = "") {
+  if (catalogAutoLoading || state.view !== kind) return;
+  const grid = main.querySelector(".catalog-grid");
+  const sentinel = main.querySelector("[data-auto-load]");
+  if (!grid || !sentinel) return;
+  const filtered = filteredCatalogItems(kind);
+  const start = Math.min(state.visibleCount, filtered.length);
+  if (start >= filtered.length) { sentinel.remove(); return; }
+
+  catalogAutoLoading = true;
+  sentinel.classList.add("loading");
+  sentinel.querySelector("span").textContent = "Carregando mais cards…";
+  const nextItems = filtered.slice(start, start + state.pageSize);
+  state.visibleCount = start + nextItems.length;
+  grid.insertAdjacentHTML("beforeend", nextItems.map((item) => mediaCard(item, kind)).join(""));
+  bindDynamicActions();
+  refreshFocusable();
+  queueEpgForCards([...grid.querySelectorAll("[data-live-id]")].slice(start, start + 10));
+  const count = main.querySelector(".result-count");
+  if (count) count.textContent = `${state.visibleCount.toLocaleString("pt-BR")} de ${filtered.length.toLocaleString("pt-BR")}`;
+  if (state.visibleCount >= filtered.length) sentinel.remove();
+  else {
+    sentinel.classList.remove("loading");
+    sentinel.querySelector("span").textContent = "Os próximos cards serão carregados automaticamente";
+  }
+  catalogAutoLoading = false;
 }
 
 function renderCatalogLoading(kind) {
@@ -226,17 +361,17 @@ async function preloadMainCatalogs() {
   if (state.view === "home" && state.source) renderHome();
 }
 
-function bindCatalogFilters(kind, heading) {
+function bindCatalogFilters(kind, heading, description = "") {
   document.querySelector("#catalog-search")?.addEventListener("input", (event) => {
     state.filter.query = event.target.value;
     state.visibleCount = state.pageSize;
     clearTimeout(bindCatalogFilters.timer);
-    bindCatalogFilters.timer = setTimeout(() => renderCatalog(kind, heading), 180);
+    bindCatalogFilters.timer = setTimeout(() => renderCatalog(kind, heading, description), 180);
   });
   main.querySelectorAll("[data-group]").forEach((button) => button.addEventListener("click", () => {
     state.filter.group = button.dataset.group;
     state.visibleCount = state.pageSize;
-    renderCatalog(kind, heading);
+    renderCatalog(kind, heading, description);
     [...main.querySelectorAll("[data-group]")].find((item) => item.dataset.group === state.filter.group)?.focus();
   }));
 }
@@ -311,7 +446,7 @@ function parseLocalM3u(text) {
     const line = raw.trim();
     if (line.startsWith("#EXTINF:")) {
       const attr = (name) => line.match(new RegExp(`${name}="([^"]*)"`, "i"))?.[1] || "";
-      info = { name: attr("tvg-name") || line.slice(line.lastIndexOf(",") + 1).trim(), group: attr("group-title") || "Outros", logo: attr("tvg-logo") };
+      info = { name: attr("tvg-name") || line.slice(line.lastIndexOf(",") + 1).trim(), group: attr("group-title") || "Outros", logo: attr("tvg-logo"), epgChannelId: attr("tvg-id") };
     } else if (info && /^https?:\/\//i.test(line)) {
       items.push({ ...info, url: line, streamType: /\.m3u8($|\?)/i.test(line) ? "hls" : /\.ts($|\?)/i.test(line) ? "mpegts" : "auto" });
       info = null;
@@ -345,6 +480,12 @@ async function playStream(itemOrUrl, name = "Reproduzindo", streamType = "auto")
   state.currentItem = item;
   document.querySelector("#player-title").textContent = item.name || name;
   document.querySelector("#player-detail").textContent = item.group || "Fonte conectada pelo usuário";
+  const playerDescription = document.querySelector("#player-description");
+  if (playerDescription) {
+    const epgDescription = item.id ? state.epg.get(String(item.id))?.current?.description : "";
+    playerDescription.textContent = item.description || epgDescription || "";
+    playerDescription.classList.toggle("hidden", !playerDescription.textContent);
+  }
   playerModal.classList.remove("hidden");
   showPlayerStatus("Abrindo o canal…");
   if (state.hls) { state.hls.destroy(); state.hls = null; }
@@ -406,7 +547,7 @@ async function openSeries(item) {
     const payload = await api("/api/xtream/series", { method: "POST", body: JSON.stringify({ sessionId: item.sessionId || state.sessionId, seriesId: item.seriesId }) });
     state.episodes = payload.episodes || [];
     state.filter = { query: "", group: "Todos" };
-    renderCatalog("episodes", payload.name || item.name);
+    renderCatalog("episodes", payload.name || item.name, payload.description || item.description || "");
   } catch (error) {
     renderCatalog("series");
     showToast(error.message, 6500);
@@ -425,6 +566,8 @@ function afterConnected(payload) {
   state.loadedCatalogs = new Set();
   state.catalogPromises = new Map();
   state.catalogErrors = new Map();
+  state.epg = new Map();
+  state.epgPending = new Set();
   if (state.movies.length) state.loadedCatalogs.add("movies");
   if (state.series.length) state.loadedCatalogs.add("series");
   localStorage.setItem("gate.lastSource", JSON.stringify({ type: state.source, connectedAt: new Date().toISOString(), counts: state.counts, expiresAt: state.account?.expiresAt || null }));
@@ -511,15 +654,15 @@ function bindRenewForm() {
 
 function bindDynamicActions() {
   main.querySelectorAll("[data-action=open-source]").forEach((button) => button.addEventListener("click", () => openSource(button.dataset.tab || "xtream")));
-  main.querySelectorAll("[data-play-url]").forEach((button) => button.addEventListener("click", () => playStream({ playUrl: button.dataset.playUrl, name: button.dataset.playName, group: button.querySelector("small")?.textContent, streamType: button.dataset.streamType || "auto" })));
-  main.querySelectorAll("[data-series-id]").forEach((button) => button.addEventListener("click", () => openSeries({ seriesId: button.dataset.seriesId, sessionId: button.dataset.sessionId, name: button.dataset.playName })));
-  main.querySelector("[data-action=back-series]")?.addEventListener("click", () => renderCatalog("series"));
-  main.querySelector("[data-action=load-more]")?.addEventListener("click", (event) => {
-    const button = event.currentTarget;
-    state.visibleCount += state.pageSize;
-    renderCatalog(button.dataset.kind || state.view, button.dataset.heading || "");
-    main.querySelector("[data-action=load-more]")?.focus();
+  main.querySelectorAll("[data-play-url]:not([data-action-bound])").forEach((button) => {
+    button.dataset.actionBound = "true";
+    button.addEventListener("click", () => playStream({ id: button.dataset.itemId, playUrl: button.dataset.playUrl, name: button.dataset.playName, group: button.querySelector("small")?.textContent, description: button.dataset.description, streamType: button.dataset.streamType || "auto" }));
   });
+  main.querySelectorAll("[data-series-id]:not([data-action-bound])").forEach((button) => {
+    button.dataset.actionBound = "true";
+    button.addEventListener("click", () => openSeries({ seriesId: button.dataset.seriesId, sessionId: button.dataset.sessionId, name: button.dataset.playName, description: button.dataset.description }));
+  });
+  main.querySelector("[data-action=back-series]")?.addEventListener("click", () => renderCatalog("series"));
 }
 
 function setupTvEnvironment() {
@@ -618,6 +761,23 @@ document.addEventListener("keydown", (event) => {
     else if (state.view !== "home") renderHome();
   }
 });
+document.addEventListener("focusin", (event) => {
+  const card = event.target.closest?.(".catalog-grid .media-card");
+  if (!card) return;
+  const cards = [...main.querySelectorAll(".catalog-grid .media-card")];
+  if (card.dataset.liveId) {
+    const index = cards.indexOf(card);
+    queueEpgForCards(cards.slice(Math.max(0, index - 1), index + 6));
+  }
+  if (cards.indexOf(card) < Math.max(0, cards.length - 10)) return;
+  const sentinel = main.querySelector("[data-auto-load]");
+  if (sentinel) appendNextCatalogPage(sentinel.dataset.kind, sentinel.dataset.heading || "");
+});
+window.addEventListener("scroll", () => {
+  const sentinel = main.querySelector("[data-auto-load]");
+  if (!sentinel || sentinel.getBoundingClientRect().top > innerHeight + 520) return;
+  appendNextCatalogPage(sentinel.dataset.kind, sentinel.dataset.heading || "");
+}, { passive: true });
 
 async function boot() {
   setupTvEnvironment();
