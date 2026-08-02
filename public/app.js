@@ -1,10 +1,18 @@
 const state = {
   config: { annualPrice: 30, adDurationSeconds: 10, paymentAvailable: false },
   source: null,
+  sessionId: null,
+  counts: {},
   channels: [],
   movies: [],
   series: [],
+  episodes: [],
+  loadedCatalogs: new Set(),
+  view: "home",
+  filter: { query: "", group: "Todos" },
   hls: null,
+  currentItem: null,
+  lastFocused: null,
   adFree: localStorage.getItem("gate.adFree") === "true"
 };
 
@@ -13,14 +21,17 @@ const sourceModal = document.querySelector("#source-modal");
 const playerModal = document.querySelector("#player-modal");
 const sourceStatus = document.querySelector("#source-status");
 const video = document.querySelector("#video-player");
+const playerStatus = document.querySelector("#player-status");
+const playerStatusText = document.querySelector("#player-status-text");
+const retryButton = document.querySelector("#retry-stream");
 const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[char]);
 
-function showToast(message) {
+function showToast(message, duration = 3800) {
   const toast = document.querySelector("#toast");
   toast.textContent = message;
   toast.classList.add("show");
   clearTimeout(showToast.timer);
-  showToast.timer = setTimeout(() => toast.classList.remove("show"), 3400);
+  showToast.timer = setTimeout(() => toast.classList.remove("show"), duration);
 }
 
 async function api(path, options = {}) {
@@ -35,10 +46,12 @@ async function api(path, options = {}) {
 
 function topbar() {
   const date = new Intl.DateTimeFormat("pt-BR", { weekday: "long", day: "2-digit", month: "long" }).format(new Date());
-  return `<header class="topbar"><span class="date">${escapeHtml(date)}</span><div class="top-actions"><span class="pill">Samsung · LG · Android TV</span></div></header>`;
+  const connected = state.source ? `<span class="pill connected-pill">● Lista conectada</span>` : "";
+  return `<header class="topbar"><span class="date">${escapeHtml(date)}</span><div class="top-actions">${connected}<span class="pill">Samsung · LG · Android TV</span></div></header>`;
 }
 
 function renderHome() {
+  state.view = "home";
   document.title = "GATE IPTV PLAYER";
   main.innerHTML = `${topbar()}
     <section class="hero">
@@ -47,38 +60,129 @@ function renderHome() {
         <h1>Todo o seu conteúdo<br>em uma única tela.</h1>
         <p>Conecte uma fonte autorizada por Xtream Codes, M3U/M3U8, arquivo local ou link direto e navegue pelo controle remoto.</p>
         <div class="button-row">
-          <button class="primary-button focusable" data-action="open-source" data-focusable>＋ Adicionar lista</button>
+          <button class="primary-button focusable" data-action="open-source" data-focusable>＋ ${state.source ? "Trocar lista" : "Adicionar lista"}</button>
           <a class="secondary-button focusable" href="/renovar" data-link data-focusable>Remover anúncios · R$ 30/ano</a>
         </div>
       </div>
     </section>
-    <div class="section-head"><h2>Formas de conectar</h2><span>Use apenas conteúdo autorizado</span></div>
+    ${state.source ? renderConnectedSummary() : renderConnectOptions()}`;
+  bindDynamicActions();
+  refreshFocusable();
+}
+
+function renderConnectOptions() {
+  return `<div class="section-head"><h2>Formas de conectar</h2><span>Use apenas conteúdo autorizado</span></div>
     <section class="format-grid">
       <button class="format-card focusable" data-action="open-source" data-tab="xtream" data-focusable><span class="format-icon">◈</span><strong>Xtream Codes</strong><small>Servidor, usuário e senha</small></button>
       <button class="format-card focusable" data-action="open-source" data-tab="m3u" data-focusable><span class="format-icon">≡</span><strong>M3U / M3U8</strong><small>Link remoto ou arquivo local</small></button>
       <button class="format-card focusable" data-action="open-source" data-tab="portal" data-focusable><span class="format-icon">⌁</span><strong>Portal / MAC</strong><small>Validação para portais compatíveis</small></button>
       <button class="format-card focusable" data-action="open-source" data-tab="direct" data-focusable><span class="format-icon">▶</span><strong>HLS e link direto</strong><small>M3U8, MP4 e MPEG-TS</small></button>
     </section>
-    ${renderConnectedRows()}`;
+    <div class="section-head"><h2>Pronto para começar</h2></div><div class="empty-state">Nenhuma fonte conectada. Seus dados de acesso não são salvos permanentemente no servidor.</div>`;
+}
+
+function renderConnectedSummary() {
+  const live = Number(state.counts.live ?? state.channels.length);
+  const liveLoaded = state.channels.length;
+  return `<div class="section-head"><h2>Sua lista</h2><span>${liveLoaded}${live > liveLoaded ? ` de ${live}` : ""} canais prontos</span></div>
+    <section class="library-launchers">
+      <button class="library-launch focusable" data-action="open-live" data-focusable><span class="launcher-icon live">●</span><span><strong>TV ao vivo</strong><small>${live.toLocaleString("pt-BR")} canais encontrados</small></span><b>›</b></button>
+      <button class="library-launch focusable" data-action="open-movies" data-focusable><span class="launcher-icon">▶</span><span><strong>Filmes</strong><small>Carregar catálogo sob demanda</small></span><b>›</b></button>
+      <button class="library-launch focusable" data-action="open-series" data-focusable><span class="launcher-icon">▣</span><span><strong>Séries</strong><small>Temporadas e episódios</small></span><b>›</b></button>
+    </section>
+    <div class="section-head"><h2>Continue assistindo</h2><span>Selecione um canal</span></div>${mediaRow(state.channels.slice(0, 18), "Ao vivo")}`;
+}
+
+function mediaRow(items, kind) {
+  if (!items.length) return `<div class="empty-state">Nenhum item de ${escapeHtml(kind)} foi carregado.</div>`;
+  return `<div class="media-row">${items.map((item) => mediaCard(item, kind)).join("")}</div>`;
+}
+
+function mediaCard(item, kind) {
+  const style = item.logo ? ` style="background-image:linear-gradient(transparent,rgba(4,8,15,.9)),url('${escapeHtml(item.logo)}')"` : "";
+  const playable = Boolean(item.playUrl);
+  const seriesData = item.seriesId ? ` data-series-id="${escapeHtml(item.seriesId)}" data-session-id="${escapeHtml(item.sessionId || state.sessionId || "")}"` : "";
+  return `<button class="media-card focusable ${item.logo ? "has-image" : ""}" data-focusable${playable ? ` data-play-url="${escapeHtml(item.playUrl)}" data-stream-type="${escapeHtml(item.streamType || "auto")}"` : ""}${seriesData} data-play-name="${escapeHtml(item.name)}"${style}>
+    <span class="play-dot">${item.seriesId ? "＋" : "▶"}</span><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.group || kind)}</small></button>`;
+}
+
+function currentItems(kind = state.view) {
+  if (kind === "live") return state.channels;
+  if (kind === "movies") return state.movies;
+  if (kind === "series") return state.series;
+  if (kind === "episodes") return state.episodes;
+  return [];
+}
+
+function titleFor(kind) {
+  return ({ live: "TV ao vivo", movies: "Filmes", series: "Séries", episodes: "Episódios" })[kind] || "Catálogo";
+}
+
+function renderCatalog(kind, heading = "") {
+  state.view = kind;
+  const items = currentItems(kind);
+  const groups = ["Todos", ...new Set(items.map((item) => item.group || "Outros"))].slice(0, 80);
+  if (!groups.includes(state.filter.group)) state.filter.group = "Todos";
+  const query = state.filter.query.trim().toLocaleLowerCase("pt-BR");
+  const filtered = items.filter((item) => (state.filter.group === "Todos" || item.group === state.filter.group) && (!query || `${item.name} ${item.group || ""}`.toLocaleLowerCase("pt-BR").includes(query)));
+  const total = Number(kind === "live" ? state.counts.live : state.counts[kind]) || items.length;
+  document.title = `${titleFor(kind)} · GATE IPTV PLAYER`;
+  main.innerHTML = `${topbar()}
+    <section class="catalog-head">
+      <div><p class="eyebrow">${kind === "live" ? "AGORA NA TV" : kind === "episodes" ? "ESCOLHA UM EPISÓDIO" : "SUA BIBLIOTECA"}</p><h1>${escapeHtml(heading || titleFor(kind))}</h1><p>${items.length.toLocaleString("pt-BR")}${total > items.length ? ` de ${total.toLocaleString("pt-BR")}` : ""} itens disponíveis neste aparelho.</p></div>
+      <div class="catalog-actions">
+        ${kind === "episodes" ? '<button class="secondary-button focusable" data-action="back-series" data-focusable>← Voltar às séries</button>' : ""}
+        <button class="secondary-button focusable" data-action="open-source" data-focusable>Trocar lista</button>
+      </div>
+    </section>
+    <div class="catalog-toolbar">
+      <label class="search-box"><span>⌕</span><input class="focusable" data-focusable id="catalog-search" type="search" placeholder="Buscar por nome ou categoria" value="${escapeHtml(state.filter.query)}" /></label>
+      <span class="result-count">${filtered.length.toLocaleString("pt-BR")} resultados</span>
+    </div>
+    <div class="category-row">${groups.map((group) => `<button class="category-chip focusable ${group === state.filter.group ? "active" : ""}" data-group="${escapeHtml(group)}" data-focusable>${escapeHtml(group)}</button>`).join("")}</div>
+    ${filtered.length ? `<section class="catalog-grid">${filtered.map((item) => mediaCard(item, titleFor(kind))).join("")}</section>` : '<div class="empty-state">Nenhum item corresponde a esta busca.</div>'}`;
   bindDynamicActions();
+  bindCatalogFilters(kind, heading);
+  refreshFocusable();
 }
 
-function mediaCards(items, kind) {
-  if (!items.length) return `<div class="empty-state">Conecte uma lista para ver ${kind} aqui.</div>`;
-  return `<div class="media-row">${items.slice(0, 18).map((item) => {
-    const style = item.logo ? ` style="background-image:linear-gradient(transparent,rgba(4,8,15,.9)),url('${escapeHtml(item.logo)}')"` : "";
-    return `<button class="media-card focusable ${item.logo ? "has-image" : ""}" data-focusable data-play-url="${escapeHtml(item.url || "")}" data-play-name="${escapeHtml(item.name)}"${style}>${item.url ? '<span class="play-dot">▶</span>' : ""}<strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.group || kind)}</small></button>`;
-  }).join("")}</div>`;
+function renderCatalogLoading(kind) {
+  state.view = kind;
+  main.innerHTML = `${topbar()}<section class="catalog-head"><div><p class="eyebrow">CARREGANDO DA SUA FONTE</p><h1>${titleFor(kind)}</h1><p>Listas grandes podem levar alguns segundos.</p></div></section><div class="catalog-loading"><i></i><strong>Organizando ${titleFor(kind).toLowerCase()} e categorias…</strong><span>Não feche o aplicativo.</span></div>`;
 }
 
-function renderConnectedRows() {
-  if (!state.source) return `<div class="section-head"><h2>Pronto para começar</h2></div><div class="empty-state">Nenhuma fonte conectada. Seus dados de acesso não são salvos no servidor.</div>`;
-  return `<div class="section-head"><h2>Ao vivo</h2><span>${state.channels.length} itens carregados</span></div>${mediaCards(state.channels, "Ao vivo")}
-    <div class="section-head"><h2>Filmes</h2><span>Da sua fonte</span></div>${mediaCards(state.movies, "Filmes")}
-    <div class="section-head"><h2>Séries</h2><span>Da sua fonte</span></div>${mediaCards(state.series, "Séries")}`;
+async function ensureCatalog(kind) {
+  state.filter = { query: "", group: "Todos" };
+  if (kind === "live") return renderCatalog("live");
+  if (state.loadedCatalogs.has(kind) || !state.sessionId) return renderCatalog(kind);
+  renderCatalogLoading(kind);
+  try {
+    const payload = await api("/api/xtream/catalog", { method: "POST", body: JSON.stringify({ sessionId: state.sessionId, kind }) });
+    state[kind] = payload.items || [];
+    state.counts[kind] = payload.total;
+    state.loadedCatalogs.add(kind);
+    renderCatalog(kind);
+  } catch (error) {
+    renderHome();
+    showToast(error.message, 6500);
+  }
+}
+
+function bindCatalogFilters(kind, heading) {
+  document.querySelector("#catalog-search")?.addEventListener("input", (event) => {
+    state.filter.query = event.target.value;
+    clearTimeout(bindCatalogFilters.timer);
+    bindCatalogFilters.timer = setTimeout(() => renderCatalog(kind, heading), 180);
+  });
+  main.querySelectorAll("[data-group]").forEach((button) => button.addEventListener("click", () => {
+    state.filter.group = button.dataset.group;
+    renderCatalog(kind, heading);
+    [...main.querySelectorAll("[data-group]")].find((item) => item.dataset.group === state.filter.group)?.focus();
+  }));
 }
 
 function renderRenew() {
+  state.view = "renew";
   document.title = "Renovar por MAC · GATE IPTV PLAYER";
   const deviceId = getDeviceId();
   main.innerHTML = `${topbar()}
@@ -92,12 +196,7 @@ function renderRenew() {
         <button class="primary-button focusable" data-focusable type="submit">Solicitar renovação anual</button>
         <div id="renew-result" aria-live="polite"></div>
       </form>
-      <aside class="price-card">
-        <p class="eyebrow">PLANO ANUAL</p><h2>GATE sem anúncios</h2>
-        <div class="price">R$ 30<small>/ano</small></div>
-        <ul class="benefits"><li>Remove os anúncios de 10 segundos</li><li>Vinculação a um aparelho</li><li>Compatível com a mesma conta/lista</li><li>Renovação rápida pelo MAC</li></ul>
-        <p class="legal-note">A assinatura remove anúncios do player. Ela não inclui canais, filmes, séries nem assinatura de terceiros.</p>
-      </aside>
+      <aside class="price-card"><p class="eyebrow">PLANO ANUAL</p><h2>GATE sem anúncios</h2><div class="price">R$ 30<small>/ano</small></div><ul class="benefits"><li>Remove os anúncios de 10 segundos</li><li>Vinculação a um aparelho</li><li>Compatível com a mesma conta/lista</li><li>Renovação rápida pelo MAC</li></ul><p class="legal-note">A assinatura remove anúncios do player. Ela não inclui canais, filmes, séries nem assinatura de terceiros.</p></aside>
     </section>`;
   bindRenewForm();
 }
@@ -116,7 +215,7 @@ function navigate(pathname) {
 function openSource(tab = "xtream") {
   sourceModal.classList.remove("hidden");
   selectSourceTab(tab);
-  setTimeout(() => sourceModal.querySelector("input:not([type=file])")?.focus(), 30);
+  setTimeout(() => sourceModal.querySelector(".source-form:not(.hidden) input:not([type=file])")?.focus(), 30);
 }
 
 function closeSource() {
@@ -136,6 +235,14 @@ function setSourceStatus(message, type = "") {
   sourceStatus.className = `form-status ${type}`;
 }
 
+function setFormBusy(form, busy, busyText = "Conectando…") {
+  const button = form.querySelector("button[type=submit]");
+  if (!button) return;
+  if (!button.dataset.label) button.dataset.label = button.textContent;
+  button.disabled = busy;
+  button.textContent = busy ? busyText : button.dataset.label;
+}
+
 function parseLocalM3u(text) {
   const lines = text.split(/\r?\n/);
   const items = [];
@@ -146,27 +253,81 @@ function parseLocalM3u(text) {
       const attr = (name) => line.match(new RegExp(`${name}="([^"]*)"`, "i"))?.[1] || "";
       info = { name: attr("tvg-name") || line.slice(line.lastIndexOf(",") + 1).trim(), group: attr("group-title") || "Outros", logo: attr("tvg-logo") };
     } else if (info && /^https?:\/\//i.test(line)) {
-      items.push({ ...info, url: line }); info = null;
-      if (items.length >= 500) break;
+      items.push({ ...info, url: line, streamType: /\.m3u8($|\?)/i.test(line) ? "hls" : /\.ts($|\?)/i.test(line) ? "mpegts" : "auto" });
+      info = null;
+      if (items.length >= 800) break;
     }
   }
   return items;
 }
 
-async function playStream(url, name = "Reproduzindo") {
-  if (!url) return;
-  document.querySelector("#player-title").textContent = name;
-  document.querySelector("#player-detail").textContent = "Fonte conectada pelo usuário";
+function showPlayerStatus(message, type = "loading") {
+  playerStatus.className = `player-status ${type}`;
+  playerStatusText.textContent = message;
+  retryButton.classList.toggle("hidden", type !== "error");
+}
+
+function hidePlayerStatus() {
+  playerStatus.classList.add("hidden");
+}
+
+function hlsErrorMessage(data) {
+  if (data?.response?.code === 401 || data?.response?.code === 403) return "A fonte recusou este canal. Verifique se a conta está ativa e se há conexão disponível.";
+  if (data?.response?.code === 404) return "Este canal não está disponível na fonte neste momento.";
+  if (data?.type === window.Hls?.ErrorTypes?.MEDIA_ERROR) return "O formato deste canal não pôde ser decodificado nesta TV.";
+  return "O canal não respondeu. Tente novamente ou escolha outro canal.";
+}
+
+async function playStream(itemOrUrl, name = "Reproduzindo", streamType = "auto") {
+  const item = typeof itemOrUrl === "string" ? { playUrl: itemOrUrl, name, streamType } : itemOrUrl;
+  if (!item?.playUrl) return;
+  state.lastFocused = document.activeElement;
+  state.currentItem = item;
+  document.querySelector("#player-title").textContent = item.name || name;
+  document.querySelector("#player-detail").textContent = item.group || "Fonte conectada pelo usuário";
   playerModal.classList.remove("hidden");
+  showPlayerStatus("Abrindo o canal…");
   if (state.hls) { state.hls.destroy(); state.hls = null; }
-  if (/\.m3u8($|\?)/i.test(url) && window.Hls?.isSupported()) {
-    state.hls = new window.Hls({ maxBufferLength: 30, enableWorker: true });
-    state.hls.loadSource(url);
-    state.hls.attachMedia(video);
-  } else {
-    video.src = url;
+  video.pause();
+  video.removeAttribute("src");
+  video.load();
+
+  const type = item.streamType || streamType;
+  if (type === "mpegts") {
+    showPlayerStatus("Este canal usa MPEG-TS direto. Tentando reprodução nativa…");
+    video.src = item.playUrl;
+    video.play().catch(() => {});
+    return;
   }
-  video.play().catch(() => showToast("Pressione play para iniciar a reprodução."));
+  if (type === "hls" && window.Hls?.isSupported()) {
+    const hls = new window.Hls({ maxBufferLength: 24, maxMaxBufferLength: 48, enableWorker: true, manifestLoadingTimeOut: 20_000, levelLoadingTimeOut: 20_000, fragLoadingTimeOut: 25_000 });
+    state.hls = hls;
+    let networkRetries = 0;
+    let mediaRetries = 0;
+    hls.on(window.Hls.Events.MANIFEST_PARSED, () => {
+      showPlayerStatus("Sinal encontrado. Iniciando reprodução…");
+      video.play().catch(() => showPlayerStatus("Pressione OK ou Play para iniciar.", "ready"));
+    });
+    hls.on(window.Hls.Events.ERROR, (_event, data) => {
+      if (!data.fatal) return;
+      if (data.type === window.Hls.ErrorTypes.NETWORK_ERROR && networkRetries < 1) {
+        networkRetries += 1;
+        showPlayerStatus("Reconectando ao canal…");
+        setTimeout(() => hls.startLoad(), 1200);
+      } else if (data.type === window.Hls.ErrorTypes.MEDIA_ERROR && mediaRetries < 1) {
+        mediaRetries += 1;
+        showPlayerStatus("Ajustando o formato do vídeo…");
+        hls.recoverMediaError();
+      } else {
+        showPlayerStatus(hlsErrorMessage(data), "error");
+      }
+    });
+    hls.loadSource(item.playUrl);
+    hls.attachMedia(video);
+  } else {
+    video.src = item.playUrl;
+    video.play().catch(() => showPlayerStatus("Pressione OK ou Play para iniciar.", "ready"));
+  }
 }
 
 function closePlayer() {
@@ -175,53 +336,95 @@ function closePlayer() {
   video.load();
   if (state.hls) { state.hls.destroy(); state.hls = null; }
   playerModal.classList.add("hidden");
+  hidePlayerStatus();
+  state.lastFocused?.focus?.();
+}
+
+async function openSeries(item) {
+  renderCatalogLoading("episodes");
+  try {
+    const payload = await api("/api/xtream/series", { method: "POST", body: JSON.stringify({ sessionId: item.sessionId || state.sessionId, seriesId: item.seriesId }) });
+    state.episodes = payload.episodes || [];
+    state.filter = { query: "", group: "Todos" };
+    renderCatalog("episodes", payload.name || item.name);
+  } catch (error) {
+    renderCatalog("series");
+    showToast(error.message, 6500);
+  }
 }
 
 function afterConnected(payload) {
   state.source = payload.source;
+  state.sessionId = payload.sessionId || null;
+  state.counts = payload.counts || { live: payload.channels?.length || 0, movies: payload.movies?.length || 0, series: payload.series?.length || 0 };
   state.channels = payload.channels || [];
   state.movies = payload.movies || [];
   state.series = payload.series || [];
-  localStorage.setItem("gate.lastSource", JSON.stringify({ type: state.source, connectedAt: new Date().toISOString(), counts: payload.counts || { live: state.channels.length } }));
+  state.episodes = [];
+  state.loadedCatalogs = new Set();
+  if (state.movies.length) state.loadedCatalogs.add("movies");
+  if (state.series.length) state.loadedCatalogs.add("series");
+  localStorage.setItem("gate.lastSource", JSON.stringify({ type: state.source, connectedAt: new Date().toISOString(), counts: state.counts }));
   closeSource();
-  navigate("/");
-  showToast(`${state.channels.length} canais carregados com sucesso.`);
+  history.replaceState({}, "", "/");
+  state.filter = { query: "", group: "Todos" };
+  renderCatalog("live");
+  showToast(`${state.channels.length.toLocaleString("pt-BR")} canais prontos para assistir.`);
 }
 
 function bindForms() {
   document.querySelector("#xtream-form").addEventListener("submit", async (event) => {
-    event.preventDefault(); setSourceStatus("Validando a fonte…");
-    const body = Object.fromEntries(new FormData(event.currentTarget));
-    try { afterConnected(await api("/api/xtream/connect", { method: "POST", body: JSON.stringify(body) })); }
+    event.preventDefault();
+    const form = event.currentTarget;
+    setSourceStatus("Autenticando e organizando os canais…");
+    setFormBusy(form, true, "Carregando canais…");
+    try { afterConnected(await api("/api/xtream/connect", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(form))) })); }
     catch (error) { setSourceStatus(error.message, "error"); }
+    finally { setFormBusy(form, false); }
   });
   document.querySelector("#m3u-form").addEventListener("submit", async (event) => {
-    event.preventDefault(); setSourceStatus("Lendo a lista…");
-    const data = new FormData(event.currentTarget);
+    event.preventDefault();
+    const form = event.currentTarget;
+    const data = new FormData(form);
     const file = data.get("file");
+    const url = String(data.get("url") || "");
+    setSourceStatus(/\/get\.php/i.test(url) ? "Servidor Xtream detectado. Carregando canais e categorias…" : "Lendo e organizando a lista…");
+    setFormBusy(form, true, "Importando…");
     try {
       if (file?.size) {
-        if (file.size > 8_000_000) throw new Error("O arquivo deve ter no máximo 8 MB nesta versão.");
-        const channels = parseLocalM3u(await file.text());
-        if (!channels.length) throw new Error("Nenhum canal válido foi encontrado no arquivo.");
-        afterConnected({ source: "m3u-file", channels });
+        if (file.size > 25_000_000) throw new Error("O arquivo deve ter no máximo 25 MB.");
+        const localItems = parseLocalM3u(await file.text());
+        if (!localItems.length) throw new Error("Nenhum canal válido foi encontrado no arquivo.");
+        const prepared = await api("/api/streams/register", { method: "POST", body: JSON.stringify({ items: localItems }) });
+        afterConnected({ source: "m3u-file", channels: prepared.items, counts: { live: prepared.items.length } });
       } else {
-        afterConnected(await api("/api/m3u/parse", { method: "POST", body: JSON.stringify({ url: data.get("url") }) }));
+        afterConnected(await api("/api/m3u/parse", { method: "POST", body: JSON.stringify({ url }) }));
       }
     } catch (error) { setSourceStatus(error.message, "error"); }
+    finally { setFormBusy(form, false); }
   });
   document.querySelector("#portal-form").addEventListener("submit", async (event) => {
-    event.preventDefault(); setSourceStatus("Validando o portal…");
+    event.preventDefault();
+    const form = event.currentTarget;
+    setSourceStatus("Validando o portal…");
+    setFormBusy(form, true, "Validando…");
     try {
-      const payload = await api("/api/portal/validate", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(event.currentTarget))) });
+      const payload = await api("/api/portal/validate", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(form))) });
       setSourceStatus(payload.message, "success");
     } catch (error) { setSourceStatus(error.message, "error"); }
+    finally { setFormBusy(form, false); }
   });
-  document.querySelector("#direct-form").addEventListener("submit", (event) => {
+  document.querySelector("#direct-form").addEventListener("submit", async (event) => {
     event.preventDefault();
-    const url = new FormData(event.currentTarget).get("url");
-    closeSource();
-    playStream(url, "Link direto");
+    const form = event.currentTarget;
+    setFormBusy(form, true, "Preparando…");
+    try {
+      const url = new FormData(form).get("url");
+      const payload = await api("/api/stream/register", { method: "POST", body: JSON.stringify({ url }) });
+      closeSource();
+      playStream({ ...payload, name: "Link direto", group: "Fonte conectada" });
+    } catch (error) { setSourceStatus(error.message, "error"); }
+    finally { setFormBusy(form, false); }
   });
 }
 
@@ -234,25 +437,23 @@ function bindRenewForm() {
     try {
       const payload = await api("/api/renewals", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(event.currentTarget))) });
       result.className = "result-box";
-      result.innerHTML = `<strong>Solicitação criada</strong><p>MAC: ${escapeHtml(payload.mac)}<br>Protocolo: ${escapeHtml(payload.protocol)}</p>${payload.checkoutUrl ? `<a class="primary-button focusable" data-focusable href="${escapeHtml(payload.checkoutUrl)}" target="_blank" rel="noopener">Ir para pagamento</a>` : `<p>O pagamento online será liberado assim que a conta de cobrança for conectada.</p>`}`;
+      result.innerHTML = `<strong>Solicitação criada</strong><p>MAC: ${escapeHtml(payload.mac)}<br>Protocolo: ${escapeHtml(payload.protocol)}</p>${payload.checkoutUrl ? `<a class="primary-button focusable" data-focusable href="${escapeHtml(payload.checkoutUrl)}" target="_blank" rel="noopener">Ir para pagamento</a>` : "<p>O pagamento online será liberado assim que a conta de cobrança for conectada.</p>"}`;
       refreshFocusable();
-    } catch (error) {
-      result.className = "result-box"; result.textContent = error.message;
-    } finally { button.disabled = false; button.textContent = "Solicitar renovação anual"; }
+    } catch (error) { result.className = "result-box"; result.textContent = error.message; }
+    finally { button.disabled = false; button.textContent = "Solicitar renovação anual"; }
   });
 }
 
 function bindDynamicActions() {
   main.querySelectorAll("[data-action=open-source]").forEach((button) => button.addEventListener("click", () => openSource(button.dataset.tab || "xtream")));
-  main.querySelectorAll("[data-play-url]").forEach((button) => button.addEventListener("click", () => playStream(button.dataset.playUrl, button.dataset.playName)));
+  main.querySelectorAll("[data-play-url]").forEach((button) => button.addEventListener("click", () => playStream({ playUrl: button.dataset.playUrl, name: button.dataset.playName, group: button.querySelector("small")?.textContent, streamType: button.dataset.streamType || "auto" })));
+  main.querySelectorAll("[data-series-id]").forEach((button) => button.addEventListener("click", () => openSeries({ seriesId: button.dataset.seriesId, sessionId: button.dataset.sessionId, name: button.dataset.playName })));
+  main.querySelector("[data-action=back-series]")?.addEventListener("click", () => renderCatalog("series"));
 }
 
 function getDeviceId() {
   let id = localStorage.getItem("gate.deviceId");
-  if (!id) {
-    id = `GT-${cryptoRandom(4)}-${cryptoRandom(4)}`;
-    localStorage.setItem("gate.deviceId", id);
-  }
+  if (!id) { id = `GT-${cryptoRandom(4)}-${cryptoRandom(4)}`; localStorage.setItem("gate.deviceId", id); }
   return id;
 }
 
@@ -292,20 +493,26 @@ function showAd() {
   progress.style.transition = `width ${remaining}s linear`; requestAnimationFrame(() => { progress.style.width = "100%"; });
   const timer = setInterval(() => {
     remaining -= 1; countdown.textContent = Math.max(0, remaining);
-    if (remaining <= 0) {
-      clearInterval(timer); skip.disabled = false; skip.textContent = "Continuar"; skip.focus();
-    }
+    if (remaining <= 0) { clearInterval(timer); skip.disabled = false; skip.textContent = "Continuar"; skip.focus(); }
   }, 1000);
   skip.addEventListener("click", () => { if (!skip.disabled) { overlay.classList.add("hidden"); sessionStorage.setItem("gate.adShown", "true"); refreshFocusable(); } }, { once: true });
 }
+
+video.addEventListener("playing", hidePlayerStatus);
+video.addEventListener("canplay", () => { if (!video.paused) hidePlayerStatus(); });
+video.addEventListener("waiting", () => showPlayerStatus("Carregando o sinal…"));
+video.addEventListener("stalled", () => showPlayerStatus("Sinal instável. Reconectando…"));
+video.addEventListener("error", () => showPlayerStatus(video.error?.code === 4 && state.currentItem?.streamType === "mpegts" ? "Esta TV não reproduz MPEG-TS direto. Use a saída M3U8/Xtream do mesmo servidor." : "Não foi possível reproduzir este canal.", "error"));
+retryButton.addEventListener("click", () => state.currentItem && playStream(state.currentItem));
 
 document.addEventListener("click", (event) => {
   const link = event.target.closest("[data-link]");
   if (link) { event.preventDefault(); navigate(link.getAttribute("href")); }
   const action = event.target.closest("[data-action]")?.dataset.action;
   if (action === "open-source" && !event.target.closest("main")) openSource("xtream");
-  if (action === "open-live") state.channels.length ? main.querySelector("[data-play-url]")?.focus() : openSource("xtream");
-  if (action === "open-movies" || action === "open-series") state.source ? showToast("Catálogo conectado disponível na página inicial.") : openSource("xtream");
+  if (action === "open-live") state.channels.length ? ensureCatalog("live") : openSource("xtream");
+  if (action === "open-movies") state.source ? ensureCatalog("movies") : openSource("xtream");
+  if (action === "open-series") state.source ? ensureCatalog("series") : openSource("xtream");
   if (action === "toggle-adfree") navigate("/renovar");
 });
 document.querySelectorAll("[data-source-tab]").forEach((tab) => tab.addEventListener("click", () => selectSourceTab(tab.dataset.sourceTab)));
@@ -313,12 +520,19 @@ document.querySelector(".close-modal").addEventListener("click", closeSource);
 document.querySelector(".player-close").addEventListener("click", closePlayer);
 window.addEventListener("popstate", route);
 document.addEventListener("keydown", (event) => {
+  const playerOpen = !playerModal.classList.contains("hidden");
+  if (playerOpen) {
+    if (event.key === "Escape" || event.key === "BrowserBack" || event.key === "Backspace") { event.preventDefault(); closePlayer(); return; }
+    if (event.key === "Enter" || event.key === " ") { event.preventDefault(); video.paused ? video.play() : video.pause(); return; }
+    if (event.key === "ArrowLeft" || event.key === "ArrowRight") { event.preventDefault(); if (Number.isFinite(video.duration)) video.currentTime = Math.max(0, video.currentTime + (event.key === "ArrowLeft" ? -10 : 10)); return; }
+    if (event.key === "ArrowUp" || event.key === "ArrowDown") { event.preventDefault(); video.volume = Math.min(1, Math.max(0, video.volume + (event.key === "ArrowUp" ? .1 : -.1))); return; }
+  }
   const directions = { ArrowLeft: "left", ArrowRight: "right", ArrowUp: "up", ArrowDown: "down" };
   if (directions[event.key]) { event.preventDefault(); moveFocus(directions[event.key]); }
   if (event.key === "Escape" || event.key === "BrowserBack") {
-    if (!playerModal.classList.contains("hidden")) closePlayer();
-    else if (!sourceModal.classList.contains("hidden")) closeSource();
+    if (!sourceModal.classList.contains("hidden")) closeSource();
     else if (location.pathname !== "/") history.back();
+    else if (state.view !== "home") renderHome();
   }
 });
 

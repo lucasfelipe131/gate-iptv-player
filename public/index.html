@@ -83,6 +83,11 @@
     <div class="player-shell">
       <button class="player-close focusable" data-focusable aria-label="Fechar player">×</button>
       <video id="video-player" controls autoplay playsinline></video>
+      <div class="player-status hidden" id="player-status" role="status" aria-live="polite">
+        <i class="player-spinner"></i>
+        <strong id="player-status-text">Abrindo o canal…</strong>
+        <button class="secondary-button focusable hidden" id="retry-stream" data-focusable>Tentar novamente</button>
+      </div>
       <div class="player-meta"><strong id="player-title">Reproduzindo</strong><span id="player-detail">Fonte conectada</span></div>
     </div>
   </section>
