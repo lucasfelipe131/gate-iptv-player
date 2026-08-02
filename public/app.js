@@ -18,6 +18,8 @@ const state = {
   visibleCount: 36,
   pageSize: 36,
   hls: null,
+  previewHls: null,
+  selectedLive: null,
   currentItem: null,
   lastFocused: null,
   adFree: localStorage.getItem("gate.adFree") === "true"
@@ -32,6 +34,22 @@ const playerStatus = document.querySelector("#player-status");
 const playerStatusText = document.querySelector("#player-status-text");
 const retryButton = document.querySelector("#retry-stream");
 const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[char]);
+
+function gateIcon(name, className = "ui-icon") {
+  const paths = {
+    home: '<path d="M3 11.5 12 4l9 7.5"/><path d="M5.5 10v10h13V10M9 20v-6h6v6"/>',
+    live: '<rect x="3" y="6" width="18" height="13" rx="2"/><path d="m8 3 4 3 4-3M8 12h8M12 9v6"/>',
+    movies: '<rect x="3" y="5" width="18" height="15" rx="2"/><path d="M3 9h18M7 5l2 4m4-4 2 4m2-4 2 4"/>',
+    series: '<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 7h8M8 11h8M8 15h5"/>',
+    search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/>',
+    settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21h-4v-.09A1.7 1.7 0 0 0 8.6 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3v-4h.09A1.7 1.7 0 0 0 4.6 8.6a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3h4v.09A1.7 1.7 0 0 0 15.4 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.36.28.57.71.6 1.17V10h1v4h-.09A1.7 1.7 0 0 0 19.4 15Z"/>',
+    fullscreen: '<path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/>',
+    back: '<path d="m15 18-6-6 6-6"/>',
+    play: '<path d="m8 5 11 7-11 7Z"/>',
+    refresh: '<path d="M20 11a8 8 0 1 0-2.34 5.66M20 4v7h-7"/>'
+  };
+  return `<svg class="${className}" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${paths[name] || paths.play}</svg>`;
+}
 
 function showToast(message, duration = 3800) {
   const toast = document.querySelector("#toast");
@@ -54,7 +72,10 @@ async function api(path, options = {}) {
 function topbar() {
   const connected = state.source ? '<span class="pill connected-pill">● Lista conectada</span>' : '<span class="pill">Nenhuma lista conectada</span>';
   const expiry = state.source ? `<span class="pill expiry-pill">Validade: ${escapeHtml(formatExpiryDate(state.account?.expiresAt))}</span>` : "";
-  return `<header class="topbar"><strong class="topbar-title">GATE IPTV PLAYER</strong><div class="top-actions">${connected}${expiry}</div></header>`;
+  return `<header class="topbar">
+    <button class="top-brand focusable" data-action="go-home" data-focusable><img src="/gate-icon.svg" alt=""><span><strong>GATE</strong><small>IPTV PLAYER</small></span></button>
+    <div class="top-actions">${connected}${expiry}<button class="round-action focusable" data-action="open-source" data-focusable aria-label="Trocar lista">${gateIcon("settings")}</button></div>
+  </header>`;
 }
 
 function formatExpiryDate(value) {
@@ -65,13 +86,13 @@ function formatExpiryDate(value) {
 }
 
 function renderHome() {
+  stopLivePreview();
   state.view = "home";
   document.title = "GATE IPTV PLAYER";
   if (state.source) {
     main.innerHTML = `${topbar()}
-      <section class="tv-home-head"><div><p class="eyebrow">CONTEÚDO DA SUA LISTA</p><h1>Escolha e assista.</h1><p>TV ao vivo, filmes e séries organizados em cards.</p></div></section>
-      ${renderConnectedSummary()}
-      ${renderHomePreviews()}`;
+      <section class="tv-home-head"><div><p class="eyebrow">CONTEÚDO DA SUA LISTA</p><h1>O que você quer assistir?</h1></div></section>
+      ${renderConnectedSummary()}`;
     bindDynamicActions();
     refreshFocusable();
     queueEpgForCards();
@@ -122,9 +143,9 @@ function renderConnectedSummary() {
       <span class="account-expiry"><small>DATA DE EXPIRAÇÃO</small><strong>${escapeHtml(expires)}</strong></span>
     </section>
     <section class="library-launchers simple-launchers">
-      <button class="library-launch focusable live-launch" data-action="open-live" data-focusable><span class="launcher-icon live">●</span><span><strong>TV ao vivo</strong><small>${live.toLocaleString("pt-BR")} canais</small></span><b>›</b></button>
-      <button class="library-launch focusable movies-launch" data-action="open-movies" data-focusable><span class="launcher-icon">▶</span><span><strong>Filmes</strong><small>${escapeHtml(catalogLabel("movies", "filme"))}</small></span><b>›</b></button>
-      <button class="library-launch focusable series-launch" data-action="open-series" data-focusable><span class="launcher-icon">▣</span><span><strong>Séries</strong><small>${escapeHtml(catalogLabel("series", "série"))}</small></span><b>›</b></button>
+      <button class="library-launch focusable live-launch" data-action="open-live" data-focusable><span class="launcher-icon">${gateIcon("live")}</span><span><strong>TV ao vivo</strong><small>${live.toLocaleString("pt-BR")} canais</small></span><b>›</b></button>
+      <button class="library-launch focusable movies-launch" data-action="open-movies" data-focusable><span class="launcher-icon">${gateIcon("movies")}</span><span><strong>Filmes</strong><small>${escapeHtml(catalogLabel("movies", "filme"))}</small></span><b>›</b></button>
+      <button class="library-launch focusable series-launch" data-action="open-series" data-focusable><span class="launcher-icon">${gateIcon("series")}</span><span><strong>Séries</strong><small>${escapeHtml(catalogLabel("series", "série"))}</small></span><b>›</b></button>
     </section>`;
 }
 
@@ -194,6 +215,26 @@ function updateEpgCards() {
     if (now) now.textContent = entry.current?.title ? `Agora${currentTime ? ` ${currentTime}` : ""} · ${entry.current.title}` : "Programação não informada";
     if (next) next.textContent = entry.next?.title ? `Depois${nextTime ? ` ${nextTime}` : ""} · ${entry.next.title}` : "";
   });
+  updateLivePreviewEpg();
+}
+
+function updateLivePreviewEpg() {
+  const item = state.selectedLive;
+  const panel = main.querySelector(".live-preview-panel");
+  if (!item || !panel) return;
+  const entry = state.epg.get(String(item.id)) || {};
+  const currentTime = [formatProgramTime(entry.current?.start), formatProgramTime(entry.current?.end)].filter(Boolean).join(" – ");
+  const nextTime = [formatProgramTime(entry.next?.start), formatProgramTime(entry.next?.end)].filter(Boolean).join(" – ");
+  const nowTitle = panel.querySelector("[data-epg-now-title]");
+  const nowTime = panel.querySelector("[data-epg-now-time]");
+  const nowDescription = panel.querySelector("[data-epg-now-description]");
+  const nextTitle = panel.querySelector("[data-epg-next-title]");
+  const nextTimeNode = panel.querySelector("[data-epg-next-time]");
+  if (nowTitle) nowTitle.textContent = entry.current?.title || "Programação não informada";
+  if (nowTime) nowTime.textContent = currentTime || "Agora";
+  if (nowDescription) nowDescription.textContent = entry.current?.description || "O servidor não forneceu uma descrição para este programa.";
+  if (nextTitle) nextTitle.textContent = entry.next?.title || "Próximo programa não informado";
+  if (nextTimeNode) nextTimeNode.textContent = nextTime || "Depois";
 }
 
 async function queueEpgForCards(cards = [...main.querySelectorAll("[data-live-id]")]) {
@@ -238,6 +279,8 @@ let catalogAutoLoading = false;
 function renderCatalog(kind, heading = "", description = "") {
   catalogObserver?.disconnect();
   state.view = kind;
+  if (kind === "live") return renderLiveCatalog();
+  stopLivePreview();
   const items = currentItems(kind);
   const groups = ["Todos", ...new Set(items.map((item) => item.group || "Outros"))].slice(0, 80);
   if (!groups.includes(state.filter.group)) state.filter.group = "Todos";
@@ -249,19 +292,20 @@ function renderCatalog(kind, heading = "", description = "") {
   const focusFirstCard = !restoreSearch && (!previousFocus || previousFocus === document.body || previousFocus.matches?.("[data-action^='open-']"));
   document.title = `${titleFor(kind)} · GATE IPTV PLAYER`;
   main.innerHTML = `${topbar()}
-    <section class="catalog-head">
-      <div><p class="eyebrow">${kind === "live" ? "AGORA NA TV" : kind === "episodes" ? "ESCOLHA UM EPISÓDIO" : "SUA BIBLIOTECA"}</p><h1>${escapeHtml(heading || titleFor(kind))}</h1>${description ? `<p class="catalog-description">${escapeHtml(description)}</p>` : ""}<p>${items.length.toLocaleString("pt-BR")}${total > items.length ? ` de ${total.toLocaleString("pt-BR")}` : ""} itens disponíveis neste aparelho.</p></div>
-      <div class="catalog-actions">
-        ${kind === "episodes" ? '<button class="secondary-button focusable" data-action="back-series" data-focusable>← Voltar às séries</button>' : ""}
-        <button class="secondary-button focusable" data-action="open-source" data-focusable>Trocar lista</button>
-      </div>
+    <section class="catalog-titlebar">
+      <button class="round-action focusable" data-action="go-home" data-focusable aria-label="Voltar">${gateIcon("back")}</button>
+      <div><p class="eyebrow">${kind === "episodes" ? "ESCOLHA UM EPISÓDIO" : "SUA BIBLIOTECA"}</p><h1>${escapeHtml(heading || titleFor(kind))}</h1>${description ? `<p class="catalog-description">${escapeHtml(description)}</p>` : ""}</div>
+      ${kind === "episodes" ? '<button class="secondary-button focusable" data-action="back-series" data-focusable>Voltar às séries</button>' : `<span class="result-count">${visible.length.toLocaleString("pt-BR")} de ${filtered.length.toLocaleString("pt-BR")}</span>`}
     </section>
-    <div class="catalog-toolbar">
-      <label class="search-box"><span>⌕</span><input class="focusable" data-focusable id="catalog-search" type="search" placeholder="Buscar por nome ou categoria" value="${escapeHtml(state.filter.query)}" /></label>
-      <span class="result-count">${visible.length.toLocaleString("pt-BR")} de ${filtered.length.toLocaleString("pt-BR")}</span>
-    </div>
-    <div class="category-row">${groups.map((group) => `<button class="category-chip focusable ${group === state.filter.group ? "active" : ""}" data-group="${escapeHtml(group)}" data-focusable>${escapeHtml(group)}</button>`).join("")}</div>
-    ${filtered.length ? `<section class="catalog-grid ${kind === "movies" || kind === "series" ? "poster-grid" : ""}">${visible.map((item) => mediaCard(item, kind)).join("")}</section>${visible.length < filtered.length ? `<div class="catalog-autoload" data-auto-load data-kind="${escapeHtml(kind)}" data-heading="${escapeHtml(heading)}" role="status"><i></i><span>Os próximos cards serão carregados automaticamente</span></div>` : ""}` : '<div class="empty-state">Nenhum item corresponde a esta busca.</div>'}`;
+    <section class="catalog-layout">
+      <aside class="catalog-categories">
+        <label class="search-box">${gateIcon("search")}<input class="focusable" data-focusable id="catalog-search" type="search" placeholder="Buscar" value="${escapeHtml(state.filter.query)}" /></label>
+        <div class="category-row">${groups.map((group) => `<button class="category-chip focusable ${group === state.filter.group ? "active" : ""}" data-group="${escapeHtml(group)}" data-focusable><span>${escapeHtml(group)}</span><b>${items.filter((item) => (group === "Todos" || (item.group || "Outros") === group)).length}</b></button>`).join("")}</div>
+      </aside>
+      <div class="catalog-results">
+        ${filtered.length ? `<section class="catalog-grid ${kind === "movies" || kind === "series" ? "poster-grid" : ""}">${visible.map((item) => mediaCard(item, kind)).join("")}</section>${visible.length < filtered.length ? `<div class="catalog-autoload" data-auto-load data-kind="${escapeHtml(kind)}" data-heading="${escapeHtml(heading)}" role="status"><i></i><span>Carregando automaticamente…</span></div>` : ""}` : '<div class="empty-state">Nenhum item corresponde a esta busca.</div>'}
+      </div>
+    </section>`;
   bindDynamicActions();
   bindCatalogFilters(kind, heading, description);
   refreshFocusable();
@@ -272,8 +316,69 @@ function renderCatalog(kind, heading = "", description = "") {
     search?.focus();
     search?.setSelectionRange?.(search.value.length, search.value.length);
   } else if (focusFirstCard) {
-    setTimeout(() => main.querySelector(".catalog-grid .media-card")?.focus(), 0);
+    setTimeout(() => main.querySelector(".category-chip.active, .catalog-grid .media-card")?.focus(), 0);
   }
+}
+
+function liveChannelRow(item) {
+  const selected = String(state.selectedLive?.id || "") === String(item.id || "");
+  return `<button class="live-channel-row focusable ${selected ? "active" : ""}" data-focusable data-live-select="${escapeHtml(item.id || "")}" data-live-id="${escapeHtml(item.id || "")}">
+    <span class="channel-number">${escapeHtml(item.id || "•")}</span>
+    <span class="channel-logo">${item.logo ? `<img src="${escapeHtml(item.logo)}" alt="">` : gateIcon("live")}</span>
+    <span><strong>${escapeHtml(item.name)}</strong><small class="card-now">Carregando guia…</small></span>
+    <b>${gateIcon("play")}</b>
+  </button>`;
+}
+
+function renderLivePreview(item) {
+  const epg = item?.id ? state.epg.get(String(item.id)) : null;
+  return `<aside class="live-preview-panel">
+    <div class="live-preview-stage">
+      <video id="live-preview-video" playsinline></video>
+      <div class="preview-placeholder ${item ? "" : "visible"}">
+        ${item?.logo ? `<img src="${escapeHtml(item.logo)}" alt="">` : gateIcon("live", "preview-icon")}
+        <span>${item ? "Pressione OK no canal para assistir" : "Escolha um canal"}</span>
+      </div>
+      <button class="fullscreen-button focusable" data-action="live-fullscreen" data-focusable>${gateIcon("fullscreen")}<span>Tela cheia</span></button>
+    </div>
+    <div class="live-channel-title"><span class="live-badge">AO VIVO</span><div><strong data-live-preview-name>${escapeHtml(item?.name || "Selecione um canal")}</strong><small>${escapeHtml(item?.group || "TV ao vivo")}</small></div></div>
+    <div class="epg-card now"><small>AGORA</small><strong data-epg-now-title>${escapeHtml(epg?.current?.title || "Programação não informada")}</strong><time data-epg-now-time>Agora</time><p data-epg-now-description>${escapeHtml(epg?.current?.description || "Escolha um canal para visualizar a programação e iniciar a prévia.")}</p></div>
+    <div class="epg-card next"><small>A SEGUIR</small><strong data-epg-next-title>${escapeHtml(epg?.next?.title || "Próximo programa não informado")}</strong><time data-epg-next-time>Depois</time></div>
+  </aside>`;
+}
+
+function renderLiveCatalog() {
+  stopLivePreview();
+  catalogObserver?.disconnect();
+  state.view = "live";
+  const items = state.channels;
+  const groups = ["Todos", ...new Set(items.map((item) => item.group || "Outros"))].slice(0, 100);
+  if (!groups.includes(state.filter.group)) state.filter.group = "Todos";
+  const filtered = filteredCatalogItems("live");
+  if (state.selectedLive && !filtered.some((item) => String(item.id) === String(state.selectedLive.id))) state.selectedLive = null;
+  state.visibleCount = Math.max(60, state.visibleCount);
+  const visible = filtered.slice(0, state.visibleCount);
+  if (state.selectedLive && !items.some((item) => String(item.id) === String(state.selectedLive.id))) state.selectedLive = null;
+  document.title = "TV ao vivo · GATE IPTV PLAYER";
+  main.innerHTML = `${topbar()}
+    <section class="catalog-titlebar live-titlebar"><button class="round-action focusable" data-action="go-home" data-focusable aria-label="Voltar">${gateIcon("back")}</button><div><p class="eyebrow">AGORA NA TV</p><h1>TV ao vivo</h1></div><span class="result-count">${filtered.length.toLocaleString("pt-BR")} canais</span></section>
+    <section class="live-layout">
+      <aside class="catalog-categories live-categories">
+        <label class="search-box">${gateIcon("search")}<input class="focusable" data-focusable id="catalog-search" type="search" placeholder="Buscar canal" value="${escapeHtml(state.filter.query)}"></label>
+        <div class="category-row">${groups.map((group) => `<button class="category-chip focusable ${group === state.filter.group ? "active" : ""}" data-group="${escapeHtml(group)}" data-focusable><span>${escapeHtml(group)}</span><b>${items.filter((item) => group === "Todos" || (item.group || "Outros") === group).length}</b></button>`).join("")}</div>
+      </aside>
+      <section class="live-channel-column">
+        <div class="channel-list-head"><span>CANAL</span><span>PROGRAMAÇÃO</span></div>
+        <div class="live-channel-list">${visible.map(liveChannelRow).join("")}${visible.length < filtered.length ? `<div class="catalog-autoload" data-auto-load data-kind="live" role="status"><i></i><span>Carregando automaticamente…</span></div>` : ""}</div>
+      </section>
+      ${renderLivePreview(state.selectedLive)}
+    </section>`;
+  bindDynamicActions();
+  bindCatalogFilters("live", "");
+  refreshFocusable();
+  setupAutoPagination("live", "");
+  queueEpgForCards([...main.querySelectorAll("[data-live-id]")].slice(0, 10));
+  setTimeout(() => main.querySelector(".category-chip.active, .live-channel-row")?.focus(), 0);
 }
 
 function setupAutoPagination(kind, heading) {
@@ -287,7 +392,7 @@ function setupAutoPagination(kind, heading) {
 
 function appendNextCatalogPage(kind = state.view, heading = "") {
   if (catalogAutoLoading || state.view !== kind) return;
-  const grid = main.querySelector(".catalog-grid");
+  const grid = main.querySelector(kind === "live" ? ".live-channel-list" : ".catalog-grid");
   const sentinel = main.querySelector("[data-auto-load]");
   if (!grid || !sentinel) return;
   const filtered = filteredCatalogItems(kind);
@@ -299,7 +404,7 @@ function appendNextCatalogPage(kind = state.view, heading = "") {
   sentinel.querySelector("span").textContent = "Carregando mais cards…";
   const nextItems = filtered.slice(start, start + state.pageSize);
   state.visibleCount = start + nextItems.length;
-  grid.insertAdjacentHTML("beforeend", nextItems.map((item) => mediaCard(item, kind)).join(""));
+  sentinel.insertAdjacentHTML("beforebegin", nextItems.map((item) => kind === "live" ? liveChannelRow(item) : mediaCard(item, kind)).join(""));
   bindDynamicActions();
   refreshFocusable();
   queueEpgForCards([...grid.querySelectorAll("[data-live-id]")].slice(start, start + 10));
@@ -541,6 +646,57 @@ function closePlayer() {
   state.lastFocused?.focus?.();
 }
 
+function stopLivePreview() {
+  if (state.previewHls) { state.previewHls.destroy(); state.previewHls = null; }
+  const preview = document.querySelector("#live-preview-video");
+  if (preview) {
+    preview.pause();
+    preview.removeAttribute("src");
+    preview.load();
+  }
+}
+
+function playLivePreview(item) {
+  if (!item?.playUrl) return;
+  state.selectedLive = item;
+  main.querySelectorAll(".live-channel-row").forEach((row) => row.classList.toggle("active", row.dataset.liveSelect === String(item.id)));
+  const preview = main.querySelector("#live-preview-video");
+  const placeholder = main.querySelector(".preview-placeholder");
+  const title = main.querySelector("[data-live-preview-name]");
+  const group = main.querySelector(".live-channel-title small");
+  if (!preview) return;
+  if (title) title.textContent = item.name || "Canal";
+  if (group) group.textContent = item.group || "TV ao vivo";
+  placeholder?.classList.remove("visible");
+  if (state.previewHls) { state.previewHls.destroy(); state.previewHls = null; }
+  preview.pause();
+  preview.removeAttribute("src");
+  preview.load();
+  if (item.streamType === "hls" && window.Hls?.isSupported()) {
+    state.previewHls = new window.Hls({ maxBufferLength: 18, maxMaxBufferLength: 32, enableWorker: true });
+    state.previewHls.loadSource(item.playUrl);
+    state.previewHls.attachMedia(preview);
+    state.previewHls.on(window.Hls.Events.MANIFEST_PARSED, () => preview.play().catch(() => {}));
+  } else {
+    preview.src = item.playUrl;
+    preview.play().catch(() => {});
+  }
+  updateLivePreviewEpg();
+  const row = [...main.querySelectorAll("[data-live-select]")].find((node) => node.dataset.liveSelect === String(item.id));
+  queueEpgForCards(row ? [row] : []);
+}
+
+function openLiveFullscreen() {
+  const preview = main.querySelector("#live-preview-video");
+  const stage = main.querySelector(".live-preview-stage");
+  if (!preview || !state.selectedLive) return showToast("Escolha um canal primeiro.");
+  const request = stage?.requestFullscreen || stage?.webkitRequestFullscreen || preview.webkitEnterFullscreen;
+  if (request) {
+    try { request.call(stage?.requestFullscreen || stage?.webkitRequestFullscreen ? stage : preview); preview.play().catch(() => {}); return; } catch {}
+  }
+  playStream(state.selectedLive);
+}
+
 async function openSeries(item) {
   renderCatalogLoading("episodes");
   try {
@@ -568,6 +724,7 @@ function afterConnected(payload) {
   state.catalogErrors = new Map();
   state.epg = new Map();
   state.epgPending = new Set();
+  state.selectedLive = null;
   if (state.movies.length) state.loadedCatalogs.add("movies");
   if (state.series.length) state.loadedCatalogs.add("series");
   localStorage.setItem("gate.lastSource", JSON.stringify({ type: state.source, connectedAt: new Date().toISOString(), counts: state.counts, expiresAt: state.account?.expiresAt || null }));
@@ -654,6 +811,13 @@ function bindRenewForm() {
 
 function bindDynamicActions() {
   main.querySelectorAll("[data-action=open-source]").forEach((button) => button.addEventListener("click", () => openSource(button.dataset.tab || "xtream")));
+  main.querySelectorAll("[data-live-select]:not([data-action-bound])").forEach((button) => {
+    button.dataset.actionBound = "true";
+    button.addEventListener("click", () => {
+      const item = state.channels.find((channel) => String(channel.id) === button.dataset.liveSelect);
+      if (item) playLivePreview(item);
+    });
+  });
   main.querySelectorAll("[data-play-url]:not([data-action-bound])").forEach((button) => {
     button.dataset.actionBound = "true";
     button.addEventListener("click", () => playStream({ id: button.dataset.itemId, playUrl: button.dataset.playUrl, name: button.dataset.playName, group: button.querySelector("small")?.textContent, description: button.dataset.description, streamType: button.dataset.streamType || "auto" }));
@@ -736,6 +900,8 @@ document.addEventListener("click", (event) => {
   if (action === "open-live") state.channels.length ? ensureCatalog("live") : openSource("xtream");
   if (action === "open-movies") state.source ? ensureCatalog("movies") : openSource("xtream");
   if (action === "open-series") state.source ? ensureCatalog("series") : openSource("xtream");
+  if (action === "go-home") renderHome();
+  if (action === "live-fullscreen") openLiveFullscreen();
   if (action === "toggle-adfree") navigate("/renovar");
 });
 document.querySelectorAll("[data-source-tab]").forEach((tab) => tab.addEventListener("click", () => selectSourceTab(tab.dataset.sourceTab)));
@@ -762,9 +928,9 @@ document.addEventListener("keydown", (event) => {
   }
 });
 document.addEventListener("focusin", (event) => {
-  const card = event.target.closest?.(".catalog-grid .media-card");
+  const card = event.target.closest?.(".catalog-grid .media-card, .live-channel-row");
   if (!card) return;
-  const cards = [...main.querySelectorAll(".catalog-grid .media-card")];
+  const cards = [...main.querySelectorAll(state.view === "live" ? ".live-channel-row" : ".catalog-grid .media-card")];
   if (card.dataset.liveId) {
     const index = cards.indexOf(card);
     queueEpgForCards(cards.slice(Math.max(0, index - 1), index + 6));
