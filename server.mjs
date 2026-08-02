@@ -294,7 +294,7 @@ function rewriteManifest(text, baseUrl) {
   }).join("\n");
 }
 
-app.get("/health", (_req, res) => res.json({ ok: true, service: "gate-iptv-player", version: "0.3.0" }));
+app.get("/health", (_req, res) => res.json({ ok: true, service: "gate-iptv-player", version: "0.3.1" }));
 app.get("/api/config", (_req, res) => res.json({ annualPrice: 30, adDurationSeconds: 10, paymentAvailable: Boolean(process.env.PAYMENT_LINK_URL) }));
 
 app.post("/api/m3u/parse", async (req, res) => {
