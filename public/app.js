@@ -1,6 +1,7 @@
 const state = {
   config: { annualPrice: 30, adDurationSeconds: 10, paymentAvailable: false },
   source: null,
+  account: null,
   sessionId: null,
   counts: {},
   channels: [],
@@ -8,10 +9,12 @@ const state = {
   series: [],
   episodes: [],
   loadedCatalogs: new Set(),
+  catalogPromises: new Map(),
+  catalogErrors: new Map(),
   view: "home",
   filter: { query: "", group: "Todos" },
-  visibleCount: 48,
-  pageSize: 48,
+  visibleCount: 36,
+  pageSize: 36,
   hls: null,
   currentItem: null,
   lastFocused: null,
@@ -47,9 +50,16 @@ async function api(path, options = {}) {
 }
 
 function topbar() {
-  const date = new Intl.DateTimeFormat("pt-BR", { weekday: "long", day: "2-digit", month: "long" }).format(new Date());
-  const connected = state.source ? `<span class="pill connected-pill">● Lista conectada</span>` : "";
-  return `<header class="topbar"><span class="date">${escapeHtml(date)}</span><div class="top-actions">${connected}<span class="pill">Samsung · LG · Android TV</span></div></header>`;
+  const connected = state.source ? '<span class="pill connected-pill">● Lista conectada</span>' : '<span class="pill">Nenhuma lista conectada</span>';
+  const expiry = state.source ? `<span class="pill expiry-pill">Validade: ${escapeHtml(formatExpiryDate(state.account?.expiresAt))}</span>` : "";
+  return `<header class="topbar"><strong class="topbar-title">GATE IPTV PLAYER</strong><div class="top-actions">${connected}${expiry}</div></header>`;
+}
+
+function formatExpiryDate(value) {
+  if (!value) return "data não informada";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "data não informada";
+  return new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" }).format(date);
 }
 
 function renderHome() {
@@ -57,7 +67,7 @@ function renderHome() {
   document.title = "GATE IPTV PLAYER";
   if (state.source) {
     main.innerHTML = `${topbar()}
-      <section class="tv-home-head"><div><p class="eyebrow">GATE IPTV PLAYER</p><h1>O que deseja assistir?</h1><p>Escolha com as setas e pressione OK.</p></div><button class="secondary-button focusable" data-action="open-source" data-focusable>Trocar lista</button></section>
+      <section class="tv-home-head"><div><p class="eyebrow">CONTEÚDO DA SUA LISTA</p><h1>O que deseja assistir?</h1><p>Escolha uma das três opções e pressione OK.</p></div></section>
       ${renderConnectedSummary()}`;
     bindDynamicActions();
     refreshFocusable();
@@ -93,13 +103,25 @@ function renderConnectOptions() {
 
 function renderConnectedSummary() {
   const live = Number(state.counts.live ?? state.channels.length);
-  const liveLoaded = state.channels.length;
-  return `<section class="library-launchers">
-      <button class="library-launch focusable" data-action="open-live" data-focusable><span class="launcher-icon live">●</span><span><strong>TV ao vivo</strong><small>${live.toLocaleString("pt-BR")} canais encontrados</small></span><b>›</b></button>
-      <button class="library-launch focusable" data-action="open-movies" data-focusable><span class="launcher-icon">▶</span><span><strong>Filmes</strong><small>Carregar catálogo sob demanda</small></span><b>›</b></button>
-      <button class="library-launch focusable" data-action="open-series" data-focusable><span class="launcher-icon">▣</span><span><strong>Séries</strong><small>Temporadas e episódios</small></span><b>›</b></button>
+  const rawStatus = String(state.account?.status || "Ativa").toLowerCase();
+  const status = rawStatus === "active" ? "Ativa" : rawStatus === "expired" ? "Expirada" : state.account?.status || "Ativa";
+  const expires = formatExpiryDate(state.account?.expiresAt);
+  const catalogLabel = (kind, singular) => {
+    if (state.catalogErrors.has(kind)) return "Não foi possível carregar · pressione OK";
+    if (!state.loadedCatalogs.has(kind) && state.sessionId) return `Carregando ${singular.toLowerCase()}…`;
+    const total = Number(state.counts[kind] ?? state[kind].length);
+    return `${total.toLocaleString("pt-BR")} ${singular.toLowerCase()}${total === 1 ? "" : "s"}`;
+  };
+  return `<section class="account-strip">
+      <span class="account-dot" aria-hidden="true"></span>
+      <span><small>STATUS DA LISTA</small><strong>${escapeHtml(status)}</strong></span>
+      <span class="account-expiry"><small>DATA DE EXPIRAÇÃO</small><strong>${escapeHtml(expires)}</strong></span>
     </section>
-    <div class="section-head"><h2>Continue assistindo</h2><span>Selecione um canal</span></div>${mediaRow(state.channels.slice(0, 18), "Ao vivo")}`;
+    <section class="library-launchers simple-launchers">
+      <button class="library-launch focusable live-launch" data-action="open-live" data-focusable><span class="launcher-icon live">●</span><span><strong>TV ao vivo</strong><small>${live.toLocaleString("pt-BR")} canais</small></span><b>›</b></button>
+      <button class="library-launch focusable movies-launch" data-action="open-movies" data-focusable><span class="launcher-icon">▶</span><span><strong>Filmes</strong><small>${escapeHtml(catalogLabel("movies", "filme"))}</small></span><b>›</b></button>
+      <button class="library-launch focusable series-launch" data-action="open-series" data-focusable><span class="launcher-icon">▣</span><span><strong>Séries</strong><small>${escapeHtml(catalogLabel("series", "série"))}</small></span><b>›</b></button>
+    </section>`;
 }
 
 function mediaRow(items, kind) {
@@ -150,7 +172,7 @@ function renderCatalog(kind, heading = "") {
       <span class="result-count">${visible.length.toLocaleString("pt-BR")} de ${filtered.length.toLocaleString("pt-BR")}</span>
     </div>
     <div class="category-row">${groups.map((group) => `<button class="category-chip focusable ${group === state.filter.group ? "active" : ""}" data-group="${escapeHtml(group)}" data-focusable>${escapeHtml(group)}</button>`).join("")}</div>
-    ${filtered.length ? `<section class="catalog-grid">${visible.map((item) => mediaCard(item, titleFor(kind))).join("")}</section>${visible.length < filtered.length ? `<div class="load-more-wrap"><button class="primary-button focusable" data-action="load-more" data-kind="${escapeHtml(kind)}" data-heading="${escapeHtml(heading)}" data-focusable>Mostrar mais ${Math.min(state.pageSize, filtered.length - visible.length).toLocaleString("pt-BR")}</button></div>` : ""}` : '<div class="empty-state">Nenhum item corresponde a esta busca.</div>'}`;
+    ${filtered.length ? `<section class="catalog-grid ${kind === "movies" || kind === "series" ? "poster-grid" : ""}">${visible.map((item) => mediaCard(item, kind)).join("")}</section>${visible.length < filtered.length ? `<div class="load-more-wrap"><button class="primary-button focusable" data-action="load-more" data-kind="${escapeHtml(kind)}" data-heading="${escapeHtml(heading)}" data-focusable>Mostrar mais ${Math.min(state.pageSize, filtered.length - visible.length).toLocaleString("pt-BR")}</button></div>` : ""}` : '<div class="empty-state">Nenhum item corresponde a esta busca.</div>'}`;
   bindDynamicActions();
   bindCatalogFilters(kind, heading);
   refreshFocusable();
@@ -168,15 +190,40 @@ async function ensureCatalog(kind) {
   if (state.loadedCatalogs.has(kind) || !state.sessionId) return renderCatalog(kind);
   renderCatalogLoading(kind);
   try {
-    const payload = await api("/api/xtream/catalog", { method: "POST", body: JSON.stringify({ sessionId: state.sessionId, kind }) });
-    state[kind] = payload.items || [];
-    state.counts[kind] = payload.total;
-    state.loadedCatalogs.add(kind);
+    await loadCatalogData(kind);
     renderCatalog(kind);
   } catch (error) {
     renderHome();
     showToast(error.message, 6500);
   }
+}
+
+function loadCatalogData(kind) {
+  if (state.loadedCatalogs.has(kind) || !state.sessionId) return Promise.resolve(state[kind]);
+  if (state.catalogPromises.has(kind)) return state.catalogPromises.get(kind);
+  const sessionId = state.sessionId;
+  const request = api("/api/xtream/catalog", { method: "POST", body: JSON.stringify({ sessionId, kind }) })
+    .then((payload) => {
+      if (state.sessionId !== sessionId) return [];
+      state[kind] = payload.items || [];
+      state.counts[kind] = payload.total;
+      state.loadedCatalogs.add(kind);
+      state.catalogErrors.delete(kind);
+      return state[kind];
+    })
+    .catch((error) => {
+      if (state.sessionId === sessionId) state.catalogErrors.set(kind, error.message);
+      throw error;
+    })
+    .finally(() => state.catalogPromises.delete(kind));
+  state.catalogPromises.set(kind, request);
+  return request;
+}
+
+async function preloadMainCatalogs() {
+  if (!state.sessionId) return;
+  await Promise.allSettled([loadCatalogData("movies"), loadCatalogData("series")]);
+  if (state.view === "home" && state.source) renderHome();
 }
 
 function bindCatalogFilters(kind, heading) {
@@ -368,6 +415,7 @@ async function openSeries(item) {
 
 function afterConnected(payload) {
   state.source = payload.source;
+  state.account = payload.account || null;
   state.sessionId = payload.sessionId || null;
   state.counts = payload.counts || { live: payload.channels?.length || 0, movies: payload.movies?.length || 0, series: payload.series?.length || 0 };
   state.channels = payload.channels || [];
@@ -375,15 +423,18 @@ function afterConnected(payload) {
   state.series = payload.series || [];
   state.episodes = [];
   state.loadedCatalogs = new Set();
+  state.catalogPromises = new Map();
+  state.catalogErrors = new Map();
   if (state.movies.length) state.loadedCatalogs.add("movies");
   if (state.series.length) state.loadedCatalogs.add("series");
-  localStorage.setItem("gate.lastSource", JSON.stringify({ type: state.source, connectedAt: new Date().toISOString(), counts: state.counts }));
+  localStorage.setItem("gate.lastSource", JSON.stringify({ type: state.source, connectedAt: new Date().toISOString(), counts: state.counts, expiresAt: state.account?.expiresAt || null }));
   closeSource();
   history.replaceState({}, "", "/");
   state.filter = { query: "", group: "Todos" };
   state.visibleCount = state.pageSize;
-  renderCatalog("live");
-  showToast(`${state.channels.length.toLocaleString("pt-BR")} canais prontos para assistir.`);
+  renderHome();
+  preloadMainCatalogs();
+  showToast(`Lista conectada. Validade: ${formatExpiryDate(state.account?.expiresAt)}.`);
 }
 
 function bindForms() {
@@ -571,7 +622,6 @@ document.addEventListener("keydown", (event) => {
 async function boot() {
   setupTvEnvironment();
   try { state.config = await api("/api/config"); } catch {}
-  document.querySelector("#plan-status").textContent = state.adFree ? "Sem anúncios" : "Plano gratuito";
   bindForms(); route(); showAd();
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
 }
