@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="refresh" content="8;url=https://gate-iptv-player-production.up.railway.app/?platform=webos">
+  <title>GATE IPTV PLAYER</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+    body {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #07101f;
+      color: #f6f8fc;
+      font: 32px Arial, sans-serif;
+      text-align: center;
+    }
+    main { max-width: 900px; padding: 64px; }
+    img { width: 160px; height: 160px; margin-bottom: 30px; }
+    h1 { margin: 0 0 18px; font-size: 58px; letter-spacing: 2px; }
+    p { margin: 0 0 36px; color: #aebbd0; line-height: 1.4; }
+    button {
+      min-width: 290px;
+      padding: 22px 36px;
+      border: 3px solid transparent;
+      border-radius: 14px;
+      background: #165dff;
+      color: #fff;
+      font: bold 28px Arial, sans-serif;
+    }
+    button:focus { outline: none; border-color: #b7ff24; transform: scale(1.04); }
+    small { display: block; margin-top: 36px; color: #70809a; font-size: 20px; }
+  </style>
+</head>
+<body>
+  <main>
+    <img src="assets/large-icon.png" alt="">
+    <h1>GATE IPTV PLAYER</h1>
+    <p id="status">Conectando ao aplicativo…</p>
+    <button id="retry" type="button">Tentar novamente</button>
+    <small>O GATE não fornece conteúdo. Use somente fontes autorizadas.</small>
+  </main>
+  <script>
+    (function () {
+      var appUrl = "https://gate-iptv-player-production.up.railway.app/?platform=webos";
+      var retry = document.getElementById("retry");
+      function openApp() {
+        document.getElementById("status").textContent = "Abrindo o GATE IPTV PLAYER…";
+        window.location.replace(appUrl);
+      }
+      retry.addEventListener("click", openApp);
+      retry.addEventListener("keydown", function (event) {
+        if (event.keyCode === 13) openApp();
+      });
+      retry.focus();
+      window.setTimeout(openApp, 250);
+    }());
+  </script>
+</body>
+</html>
