@@ -10,6 +10,8 @@ const state = {
   loadedCatalogs: new Set(),
   view: "home",
   filter: { query: "", group: "Todos" },
+  visibleCount: 48,
+  pageSize: 48,
   hls: null,
   currentItem: null,
   lastFocused: null,
@@ -53,6 +55,14 @@ function topbar() {
 function renderHome() {
   state.view = "home";
   document.title = "GATE IPTV PLAYER";
+  if (state.source) {
+    main.innerHTML = `${topbar()}
+      <section class="tv-home-head"><div><p class="eyebrow">GATE IPTV PLAYER</p><h1>O que deseja assistir?</h1><p>Escolha com as setas e pressione OK.</p></div><button class="secondary-button focusable" data-action="open-source" data-focusable>Trocar lista</button></section>
+      ${renderConnectedSummary()}`;
+    bindDynamicActions();
+    refreshFocusable();
+    return;
+  }
   main.innerHTML = `${topbar()}
     <section class="hero">
       <div class="hero-content">
@@ -65,7 +75,7 @@ function renderHome() {
         </div>
       </div>
     </section>
-    ${state.source ? renderConnectedSummary() : renderConnectOptions()}`;
+    ${renderConnectOptions()}`;
   bindDynamicActions();
   refreshFocusable();
 }
@@ -84,8 +94,7 @@ function renderConnectOptions() {
 function renderConnectedSummary() {
   const live = Number(state.counts.live ?? state.channels.length);
   const liveLoaded = state.channels.length;
-  return `<div class="section-head"><h2>Sua lista</h2><span>${liveLoaded}${live > liveLoaded ? ` de ${live}` : ""} canais prontos</span></div>
-    <section class="library-launchers">
+  return `<section class="library-launchers">
       <button class="library-launch focusable" data-action="open-live" data-focusable><span class="launcher-icon live">●</span><span><strong>TV ao vivo</strong><small>${live.toLocaleString("pt-BR")} canais encontrados</small></span><b>›</b></button>
       <button class="library-launch focusable" data-action="open-movies" data-focusable><span class="launcher-icon">▶</span><span><strong>Filmes</strong><small>Carregar catálogo sob demanda</small></span><b>›</b></button>
       <button class="library-launch focusable" data-action="open-series" data-focusable><span class="launcher-icon">▣</span><span><strong>Séries</strong><small>Temporadas e episódios</small></span><b>›</b></button>
@@ -125,6 +134,7 @@ function renderCatalog(kind, heading = "") {
   if (!groups.includes(state.filter.group)) state.filter.group = "Todos";
   const query = state.filter.query.trim().toLocaleLowerCase("pt-BR");
   const filtered = items.filter((item) => (state.filter.group === "Todos" || item.group === state.filter.group) && (!query || `${item.name} ${item.group || ""}`.toLocaleLowerCase("pt-BR").includes(query)));
+  const visible = filtered.slice(0, state.visibleCount);
   const total = Number(kind === "live" ? state.counts.live : state.counts[kind]) || items.length;
   document.title = `${titleFor(kind)} · GATE IPTV PLAYER`;
   main.innerHTML = `${topbar()}
@@ -137,10 +147,10 @@ function renderCatalog(kind, heading = "") {
     </section>
     <div class="catalog-toolbar">
       <label class="search-box"><span>⌕</span><input class="focusable" data-focusable id="catalog-search" type="search" placeholder="Buscar por nome ou categoria" value="${escapeHtml(state.filter.query)}" /></label>
-      <span class="result-count">${filtered.length.toLocaleString("pt-BR")} resultados</span>
+      <span class="result-count">${visible.length.toLocaleString("pt-BR")} de ${filtered.length.toLocaleString("pt-BR")}</span>
     </div>
     <div class="category-row">${groups.map((group) => `<button class="category-chip focusable ${group === state.filter.group ? "active" : ""}" data-group="${escapeHtml(group)}" data-focusable>${escapeHtml(group)}</button>`).join("")}</div>
-    ${filtered.length ? `<section class="catalog-grid">${filtered.map((item) => mediaCard(item, titleFor(kind))).join("")}</section>` : '<div class="empty-state">Nenhum item corresponde a esta busca.</div>'}`;
+    ${filtered.length ? `<section class="catalog-grid">${visible.map((item) => mediaCard(item, titleFor(kind))).join("")}</section>${visible.length < filtered.length ? `<div class="load-more-wrap"><button class="primary-button focusable" data-action="load-more" data-kind="${escapeHtml(kind)}" data-heading="${escapeHtml(heading)}" data-focusable>Mostrar mais ${Math.min(state.pageSize, filtered.length - visible.length).toLocaleString("pt-BR")}</button></div>` : ""}` : '<div class="empty-state">Nenhum item corresponde a esta busca.</div>'}`;
   bindDynamicActions();
   bindCatalogFilters(kind, heading);
   refreshFocusable();
@@ -153,6 +163,7 @@ function renderCatalogLoading(kind) {
 
 async function ensureCatalog(kind) {
   state.filter = { query: "", group: "Todos" };
+  state.visibleCount = state.pageSize;
   if (kind === "live") return renderCatalog("live");
   if (state.loadedCatalogs.has(kind) || !state.sessionId) return renderCatalog(kind);
   renderCatalogLoading(kind);
@@ -171,11 +182,13 @@ async function ensureCatalog(kind) {
 function bindCatalogFilters(kind, heading) {
   document.querySelector("#catalog-search")?.addEventListener("input", (event) => {
     state.filter.query = event.target.value;
+    state.visibleCount = state.pageSize;
     clearTimeout(bindCatalogFilters.timer);
     bindCatalogFilters.timer = setTimeout(() => renderCatalog(kind, heading), 180);
   });
   main.querySelectorAll("[data-group]").forEach((button) => button.addEventListener("click", () => {
     state.filter.group = button.dataset.group;
+    state.visibleCount = state.pageSize;
     renderCatalog(kind, heading);
     [...main.querySelectorAll("[data-group]")].find((item) => item.dataset.group === state.filter.group)?.focus();
   }));
@@ -368,6 +381,7 @@ function afterConnected(payload) {
   closeSource();
   history.replaceState({}, "", "/");
   state.filter = { query: "", group: "Todos" };
+  state.visibleCount = state.pageSize;
   renderCatalog("live");
   showToast(`${state.channels.length.toLocaleString("pt-BR")} canais prontos para assistir.`);
 }
@@ -449,6 +463,21 @@ function bindDynamicActions() {
   main.querySelectorAll("[data-play-url]").forEach((button) => button.addEventListener("click", () => playStream({ playUrl: button.dataset.playUrl, name: button.dataset.playName, group: button.querySelector("small")?.textContent, streamType: button.dataset.streamType || "auto" })));
   main.querySelectorAll("[data-series-id]").forEach((button) => button.addEventListener("click", () => openSeries({ seriesId: button.dataset.seriesId, sessionId: button.dataset.sessionId, name: button.dataset.playName })));
   main.querySelector("[data-action=back-series]")?.addEventListener("click", () => renderCatalog("series"));
+  main.querySelector("[data-action=load-more]")?.addEventListener("click", (event) => {
+    const button = event.currentTarget;
+    state.visibleCount += state.pageSize;
+    renderCatalog(button.dataset.kind || state.view, button.dataset.heading || "");
+    main.querySelector("[data-action=load-more]")?.focus();
+  });
+}
+
+function setupTvEnvironment() {
+  const ua = navigator.userAgent || "";
+  const tv = /Tizen|Web0S|WebOS|NetCast|SMART-TV|SmartTV|Android TV|AFT|BRAVIA/i.test(ua);
+  document.body.classList.toggle("tv-optimized", tv);
+  if (window.tizen?.tvinputdevice) {
+    try { window.tizen.tvinputdevice.registerKeyBatch(["MediaPlay", "MediaPause", "MediaPlayPause", "MediaStop", "ColorF0Red", "ColorF1Green"]); } catch {}
+  }
 }
 
 function getDeviceId() {
@@ -520,16 +549,19 @@ document.querySelector(".close-modal").addEventListener("click", closeSource);
 document.querySelector(".player-close").addEventListener("click", closePlayer);
 window.addEventListener("popstate", route);
 document.addEventListener("keydown", (event) => {
+  const code = Number(event.keyCode || event.which || 0);
+  const backPressed = [4, 27, 461, 10009].includes(code) || event.key === "Escape" || event.key === "BrowserBack";
+  const playPausePressed = [13, 19, 415, 10252].includes(code) || event.key === "Enter" || event.key === " ";
   const playerOpen = !playerModal.classList.contains("hidden");
   if (playerOpen) {
-    if (event.key === "Escape" || event.key === "BrowserBack" || event.key === "Backspace") { event.preventDefault(); closePlayer(); return; }
-    if (event.key === "Enter" || event.key === " ") { event.preventDefault(); video.paused ? video.play() : video.pause(); return; }
+    if (backPressed || event.key === "Backspace") { event.preventDefault(); closePlayer(); return; }
+    if (playPausePressed) { event.preventDefault(); video.paused ? video.play() : video.pause(); return; }
     if (event.key === "ArrowLeft" || event.key === "ArrowRight") { event.preventDefault(); if (Number.isFinite(video.duration)) video.currentTime = Math.max(0, video.currentTime + (event.key === "ArrowLeft" ? -10 : 10)); return; }
     if (event.key === "ArrowUp" || event.key === "ArrowDown") { event.preventDefault(); video.volume = Math.min(1, Math.max(0, video.volume + (event.key === "ArrowUp" ? .1 : -.1))); return; }
   }
   const directions = { ArrowLeft: "left", ArrowRight: "right", ArrowUp: "up", ArrowDown: "down" };
   if (directions[event.key]) { event.preventDefault(); moveFocus(directions[event.key]); }
-  if (event.key === "Escape" || event.key === "BrowserBack") {
+  if (backPressed) {
     if (!sourceModal.classList.contains("hidden")) closeSource();
     else if (location.pathname !== "/") history.back();
     else if (state.view !== "home") renderHome();
@@ -537,6 +569,7 @@ document.addEventListener("keydown", (event) => {
 });
 
 async function boot() {
+  setupTvEnvironment();
   try { state.config = await api("/api/config"); } catch {}
   document.querySelector("#plan-status").textContent = state.adFree ? "Sem anúncios" : "Plano gratuito";
   bindForms(); route(); showAd();
