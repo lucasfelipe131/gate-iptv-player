@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">
+  <rect width="1920" height="1080" fill="#07101f"/>
+  <circle cx="960" cy="444" r="166" fill="#0c1930"/>
+  <path fill="#165dff" d="M960 294 834 365v164l49 27V395l77-44 77 44v161l49-27V365l-126-71Z"/>
+  <path fill="#b7ff24" d="M919 394v100l86-50-86-50Z"/>
+  <text x="960" y="690" fill="#f6f8fc" font-family="Arial, sans-serif" font-size="78" font-weight="700" text-anchor="middle" letter-spacing="5">GATE</text>
+  <text x="960" y="752" fill="#aebbd0" font-family="Arial, sans-serif" font-size="32" text-anchor="middle" letter-spacing="10">IPTV PLAYER</text>
+</svg>
