@@ -14,6 +14,7 @@ Player web/PWA otimizado para navegação por controle remoto em Smart TVs. O ap
 - validação de Portal/Ministra por URL e MAC;
 - solicitação de renovação por MAC;
 - PWA instalável.
+- pacote LG webOS Hosted Web App em `platforms/lg-webos`.
 
 ## Executar localmente
 
@@ -32,3 +33,14 @@ Acesse `http://localhost:3000`.
 ## Próximas etapas de produto
 
 O núcleo web está pronto para validação. A publicação nas lojas exige projetos de empacotamento e certificados separados para Samsung Tizen, LG webOS e Android TV.
+
+## Pacote LG webOS
+
+O projeto LG está em `platforms/lg-webos`. Para gerar o `.ipk` com a CLI oficial:
+
+```bash
+npm install -g @webos-tools/cli
+sh scripts/package-webos.sh
+```
+
+O pacote é um Hosted Web App e abre a versão publicada na Railway. Consulte `platforms/lg-webos/STORE_SUBMISSION.md` para o material e os dados que ainda precisam ser preenchidos no LG Seller Lounge.
