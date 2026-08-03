@@ -35,10 +35,12 @@ test("carrega logos, capas, EPG e paginação automática no layout de TV", asyn
     get() { return this.parentNode ? window.document.body : null; }
   });
 
+  let xtreamConnectBody = null;
   window.fetch = async (input, options = {}) => {
     const pathname = new URL(String(input), window.location.href).pathname;
     if (pathname === "/api/config") return reply({ annualPrice: 30, adDurationSeconds: 10, paymentAvailable: false });
     if (pathname === "/api/xtream/connect") {
+      xtreamConnectBody = JSON.parse(options.body || "{}");
       return reply({
         source: "xtream",
         sessionId: "test-session",
@@ -86,6 +88,14 @@ test("carrega logos, capas, EPG e paginação automática no layout de TV", asyn
         ]
       });
     }
+    if (pathname === "/api/xtream/details") {
+      const request = JSON.parse(options.body || "{}");
+      if (request.kind === "series") return reply({
+        description: "Uma investigadora retorna à cidade onde tudo começou.",
+        firstEpisode: { id: "1001", name: "Episódio 1", group: "Temporada 1", playUrl: "https://media.test/episode-1.m3u8", streamType: "hls" }
+      });
+      return reply({ description: "Uma missão perigosa muda o destino de uma equipe." });
+    }
     return reply({ error: "Rota de teste não preparada" }, false);
   };
 
@@ -95,12 +105,13 @@ test("carrega logos, capas, EPG e paginação automática no layout de TV", asyn
   assert.equal(window.document.documentElement.dataset.platform, "tv");
   await new Promise((resolve) => setTimeout(resolve, 20));
   const form = window.document.querySelector("#xtream-form");
-  form.elements.serverUrl.value = "https://provider.test";
-  form.elements.username.value = "teste";
-  form.elements.password.value = "segredo";
+  form.elements.serverUrl.value = "provider.test:8080/get.php?username=teste&password=segredo&type=m3u_plus";
+  form.elements.username.value = "";
+  form.elements.password.value = "";
   form.dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }));
 
   await waitFor(() => window.document.querySelectorAll(".library-launch").length === 3);
+  assert.deepEqual(xtreamConnectBody, { serverUrl: "http://provider.test:8080", username: "teste", password: "segredo" });
   assert.match(window.document.querySelector(".account-expiry strong").textContent, /2026/);
 
   await waitFor(() => /2 filmes/.test(window.document.querySelector(".movies-launch small")?.textContent || ""));
@@ -113,20 +124,22 @@ test("carrega logos, capas, EPG e paginação automática no layout de TV", asyn
   window.document.querySelector(".poster-grid .media-card").click();
   assert.equal(window.document.querySelector("#details-modal").classList.contains("hidden"), false);
   assert.equal(window.document.querySelector("#player-modal").classList.contains("hidden"), true);
-  assert.equal(window.document.querySelector("#details-primary").textContent, "Assistir");
+  assert.equal(window.document.querySelector("#details-primary").textContent, "Assistir agora");
   window.document.querySelector("#details-primary").click();
   assert.equal(window.document.querySelector("#details-modal").classList.contains("hidden"), true);
   assert.equal(window.document.querySelector("#player-modal").classList.contains("hidden"), false);
+  assert.equal(window.document.querySelector("#player-modal").classList.contains("player-modal-immersive"), true);
   window.document.querySelector(".player-close").click();
   window.document.querySelector("[data-action='go-home']").click();
 
   window.document.querySelector(".series-launch").click();
   await waitFor(() => window.document.querySelectorAll(".poster-grid .media-card").length === 2);
   window.document.querySelector(".poster-grid .media-card").click();
-  assert.equal(window.document.querySelector("#details-primary").textContent, "Ver episódios");
+  assert.equal(window.document.querySelector("#details-primary").textContent, "Assistir episódio 1");
   window.document.querySelector("#details-primary").click();
-  await waitFor(() => window.document.querySelectorAll(".kind-episodes").length === 1);
-  assert.match(window.document.querySelector(".kind-episodes strong").textContent, /Episódio 1/);
+  await waitFor(() => /Episódio 1/.test(window.document.querySelector("#player-title").textContent));
+  assert.match(window.document.querySelector("#player-title").textContent, /Episódio 1/);
+  window.document.querySelector(".player-close").click();
   window.document.querySelector("[data-action='go-home']").click();
 
   window.document.querySelector(".live-launch").click();
@@ -137,6 +150,10 @@ test("carrega logos, capas, EPG e paginação automática no layout de TV", asyn
   await waitFor(() => /Canal 1/.test(window.document.querySelector("[data-live-preview-name]")?.textContent || ""));
   await waitFor(() => /Programa atual 1/.test(window.document.querySelector("[data-epg-now-title]")?.textContent || ""));
   assert.match(window.document.querySelector("[data-epg-next-title]").textContent, /Próximo programa 1/);
+  assert.equal(window.document.querySelectorAll(".fullscreen-button").length, 0);
+  firstChannel.click();
+  assert.equal(window.document.querySelector("#player-modal").classList.contains("hidden"), false);
+  window.document.querySelector(".player-close").click();
   assert.equal(window.document.querySelectorAll("[data-action='load-more']").length, 0);
   const firstPage = [...window.document.querySelectorAll(".live-channel-row")];
   firstPage.at(-1).focus();
