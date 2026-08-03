@@ -158,12 +158,22 @@ function safeText(value, maxLength = 1200) {
     .slice(0, maxLength);
 }
 
-function normalizeBaseUrl(value) {
-  const parsed = new URL(String(value || "").trim());
-  parsed.pathname = parsed.pathname.replace(/\/+$/, "");
+function parseXtreamServer(value) {
+  let input = String(value || "").trim();
+  if (!input) throw new Error("Informe o endereço do servidor.");
+  if (input.startsWith("//")) input = `http:${input}`;
+  else if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(input)) input = `http://${input}`;
+  const parsed = new URL(input);
+  const embeddedUsername = parsed.searchParams.get("username") || parsed.searchParams.get("user") || "";
+  const embeddedPassword = parsed.searchParams.get("password") || parsed.searchParams.get("pass") || "";
+  parsed.pathname = parsed.pathname.replace(/\/(?:player_api|panel_api|get|xmltv)\.php\/?$/i, "").replace(/\/+$/, "");
   parsed.search = "";
   parsed.hash = "";
-  return parsed.toString().replace(/\/$/, "");
+  return { base: parsed.toString().replace(/\/$/, ""), embeddedUsername, embeddedPassword };
+}
+
+function normalizeBaseUrl(value) {
+  return parseXtreamServer(value).base;
 }
 
 const streamTickets = new Map();
@@ -272,41 +282,66 @@ function parseM3u(text, limit = MAX_CATALOG_ITEMS) {
   return result;
 }
 
-function xtreamApi(base, username, password, action = "") {
+function xtreamApi(base, username, password, action = "", apiPath = "player_api.php") {
   const query = `username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`;
-  return `${base}/player_api.php?${query}${action ? `&action=${action}` : ""}`;
+  return `${base}/${apiPath}?${query}${action ? `&action=${action}` : ""}`;
+}
+
+function payloadArray(payload, keys = []) {
+  if (Array.isArray(payload)) return payload;
+  for (const key of keys) if (Array.isArray(payload?.[key])) return payload[key];
+  if (payload && typeof payload === "object") {
+    const values = Object.values(payload);
+    if (values.length && values.every((value) => value && typeof value === "object")) return values;
+  }
+  return [];
 }
 
 function categoryMap(items) {
-  return new Map((Array.isArray(items) ? items : []).map((item) => [String(item.category_id), safeLabel(item.category_name || "Outros")]));
+  return new Map(payloadArray(items, ["categories", "data"]).map((item) => [String(item.category_id ?? item.id), safeLabel(item.category_name || item.name || "Outros")]));
 }
 
 async function connectXtream({ serverUrl, username, password, source = "xtream" }) {
-  const base = normalizeBaseUrl(serverUrl);
+  const parsedServer = parseXtreamServer(serverUrl);
+  const base = parsedServer.base;
+  username = String(username || parsedServer.embeddedUsername || "").trim();
+  password = String(password || parsedServer.embeddedPassword || "");
+  if (!username || !password) throw new Error("Informe usuário e senha.");
   await validateRemoteUrl(base);
-  const account = await safeFetch(xtreamApi(base, username, password), { maxBytes: 2_000_000, asJson: true, timeoutMs: 25_000 });
-  if (!account?.user_info || String(account.user_info.auth) !== "1") throw new Error("A fonte não autorizou estes dados.");
+  let account;
+  let apiPath = "player_api.php";
+  let accountError;
+  for (const candidate of ["player_api.php", "panel_api.php"]) {
+    try {
+      account = await safeFetch(xtreamApi(base, username, password, "", candidate), { maxBytes: 2_000_000, asJson: true, timeoutMs: 25_000 });
+      if (account?.user_info || account?.userInfo) { apiPath = candidate; break; }
+    } catch (error) { accountError = error; }
+  }
+  const userInfo = account?.user_info || account?.userInfo;
+  if (!userInfo) throw accountError || new Error("A fonte não retornou uma conta Xtream compatível.");
+  if (["0", "false", "disabled", "banned", "expired"].includes(String(userInfo.auth ?? userInfo.status ?? "1").toLowerCase())) throw new Error("A fonte não autorizou estes dados.");
 
   const [categoriesResult, liveResult] = await Promise.allSettled([
-    safeFetch(xtreamApi(base, username, password, "get_live_categories"), { maxBytes: 3_000_000, asJson: true, timeoutMs: 35_000 }),
-    safeFetch(xtreamApi(base, username, password, "get_live_streams"), { maxBytes: 42_000_000, asJson: true, timeoutMs: 45_000 })
+    safeFetch(xtreamApi(base, username, password, "get_live_categories", apiPath), { maxBytes: 3_000_000, asJson: true, timeoutMs: 35_000 }),
+    safeFetch(xtreamApi(base, username, password, "get_live_streams", apiPath), { maxBytes: 42_000_000, asJson: true, timeoutMs: 45_000 })
   ]);
-  const live = liveResult.status === "fulfilled" && Array.isArray(liveResult.value) ? liveResult.value : [];
+  const live = liveResult.status === "fulfilled" ? payloadArray(liveResult.value, ["live_streams", "streams", "channels", "data"]) : [];
   if (!live.length) {
     const reason = liveResult.status === "rejected" ? liveResult.reason?.message : "Nenhum canal foi retornado.";
     throw new Error(`A conta foi autenticada, mas os canais não puderam ser carregados. ${reason || ""}`.trim());
   }
   const liveCategories = categoryMap(categoriesResult.status === "fulfilled" ? categoriesResult.value : []);
-  const extension = account.user_info.allowed_output_formats?.includes("m3u8") ? "m3u8" : "ts";
+  const formats = Array.isArray(userInfo.allowed_output_formats) ? userInfo.allowed_output_formats : String(userInfo.allowed_output_formats || "").split(/[,|\s]+/);
+  const extension = formats.some((format) => String(format).toLowerCase() === "m3u8") ? "m3u8" : "ts";
   const sessionId = crypto.randomBytes(18).toString("base64url");
-  xtreamSessions.set(sessionId, { base, username, password, expiresAt: Date.now() + SESSION_TTL });
+  xtreamSessions.set(sessionId, { base, username, password, apiPath, expiresAt: Date.now() + SESSION_TTL });
   const channels = live.slice(0, MAX_LIVE_ITEMS).map((item) => proxiedItem({
-    id: item.stream_id,
-    name: item.name,
-    logo: item.stream_icon,
-    group: liveCategories.get(String(item.category_id)) || item.category_name || "Ao vivo",
-    epgChannelId: item.epg_channel_id,
-    url: `${base}/live/${encodeURIComponent(username)}/${encodeURIComponent(password)}/${item.stream_id}.${extension}`,
+    id: item.stream_id ?? item.id ?? item.num,
+    name: item.name || item.title,
+    logo: item.stream_icon || item.logo || item.tvg_logo,
+    group: liveCategories.get(String(item.category_id ?? item.category)) || item.category_name || item.group || "Ao vivo",
+    epgChannelId: item.epg_channel_id || item.tvg_id,
+    url: `${base}/live/${encodeURIComponent(username)}/${encodeURIComponent(password)}/${item.stream_id ?? item.id}.${extension}`,
     streamType: extension === "m3u8" ? "hls" : "mpegts"
   }));
   return {
@@ -314,9 +349,9 @@ async function connectXtream({ serverUrl, username, password, source = "xtream" 
     sessionId,
     account: {
       username: safeLabel(username),
-      status: safeLabel(account.user_info.status || "Ativo"),
-      expiresAt: account.user_info.exp_date ? new Date(Number(account.user_info.exp_date) * 1000).toISOString() : null,
-      maxConnections: Number(account.user_info.max_connections || 0)
+      status: safeLabel(userInfo.status || "Ativo"),
+      expiresAt: userInfo.exp_date ? new Date(Number(userInfo.exp_date) * 1000).toISOString() : null,
+      maxConnections: Number(userInfo.max_connections || 0)
     },
     counts: { live: live.length, loadedLive: channels.length, movies: null, series: null },
     channels,
@@ -367,7 +402,7 @@ function rewriteManifest(text, baseUrl) {
   }).join("\n");
 }
 
-app.get("/health", (_req, res) => res.json({ ok: true, service: "gate-iptv-player", version: "0.4.1" }));
+app.get("/health", (_req, res) => res.json({ ok: true, service: "gate-iptv-player", version: "0.4.2" }));
 app.get("/api/config", (_req, res) => res.json({ annualPrice: 30, adDurationSeconds: 10, paymentAvailable: Boolean(process.env.PAYMENT_LINK_URL) }));
 
 app.post("/api/m3u/parse", async (req, res) => {
@@ -394,7 +429,7 @@ app.post("/api/m3u/parse", async (req, res) => {
 
 app.post("/api/xtream/connect", async (req, res) => {
   try {
-    const serverUrl = normalizeBaseUrl(req.body?.serverUrl);
+    const serverUrl = String(req.body?.serverUrl || "").trim();
     const username = String(req.body?.username || "").trim();
     const password = String(req.body?.password || "");
     if (!username || !password) return res.status(400).json({ error: "Informe usuário e senha." });
@@ -411,18 +446,18 @@ app.post("/api/xtream/catalog", async (req, res) => {
     const categoryAction = kind === "movies" ? "get_vod_categories" : "get_series_categories";
     const contentAction = kind === "movies" ? "get_vod_streams" : "get_series";
     const [categoriesResult, itemsResult] = await Promise.allSettled([
-      safeFetch(xtreamApi(session.base, session.username, session.password, categoryAction), { maxBytes: 3_000_000, asJson: true, timeoutMs: 35_000 }),
-      safeFetch(xtreamApi(session.base, session.username, session.password, contentAction), { maxBytes: 48_000_000, asJson: true, timeoutMs: 55_000 })
+      safeFetch(xtreamApi(session.base, session.username, session.password, categoryAction, session.apiPath), { maxBytes: 3_000_000, asJson: true, timeoutMs: 35_000 }),
+      safeFetch(xtreamApi(session.base, session.username, session.password, contentAction, session.apiPath), { maxBytes: 64_000_000, asJson: true, timeoutMs: 55_000 })
     ]);
-    const rawItems = itemsResult.status === "fulfilled" && Array.isArray(itemsResult.value) ? itemsResult.value : [];
+    const rawItems = itemsResult.status === "fulfilled" ? payloadArray(itemsResult.value, kind === "movies" ? ["vod_streams", "movies", "streams", "data"] : ["series", "items", "data"]) : [];
     if (!rawItems.length && itemsResult.status === "rejected") throw itemsResult.reason;
     const categories = categoryMap(categoriesResult.status === "fulfilled" ? categoriesResult.value : []);
     const items = rawItems.slice(0, MAX_CATALOG_ITEMS).map((item) => {
       const common = {
-        id: kind === "movies" ? item.stream_id : item.series_id,
-        name: item.name,
-        logo: kind === "movies" ? item.stream_icon : item.cover,
-        group: categories.get(String(item.category_id)) || item.category_name || (kind === "movies" ? "Filmes" : "Séries"),
+        id: kind === "movies" ? (item.stream_id ?? item.vod_id ?? item.movie_id ?? item.id) : (item.series_id ?? item.id),
+        name: item.name || item.title,
+        logo: kind === "movies" ? (item.stream_icon || item.cover || item.cover_big || item.logo) : (item.cover || item.cover_big || item.stream_icon || item.logo),
+        group: categories.get(String(item.category_id ?? item.category)) || item.category_name || item.group || (kind === "movies" ? "Filmes" : "Séries"),
         description: item.plot || item.description || item.info?.plot,
         rating: item.rating || item.rating_5based,
         year: item.year || item.releaseDate || item.releasedate,
@@ -430,9 +465,10 @@ app.post("/api/xtream/catalog", async (req, res) => {
       };
       if (kind === "movies") {
         const extension = String(item.container_extension || "mp4").replace(/[^a-z0-9]/gi, "") || "mp4";
-        return proxiedItem({ ...common, url: `${session.base}/movie/${encodeURIComponent(session.username)}/${encodeURIComponent(session.password)}/${item.stream_id}.${extension}`, streamType: "video" });
+        const streamId = item.stream_id ?? item.vod_id ?? item.movie_id ?? item.id;
+        return proxiedItem({ ...common, url: `${session.base}/movie/${encodeURIComponent(session.username)}/${encodeURIComponent(session.password)}/${streamId}.${extension}`, streamType: extension === "m3u8" ? "hls" : "video" });
       }
-      return proxiedItem({ ...common, seriesId: item.series_id, sessionId: req.body.sessionId });
+      return proxiedItem({ ...common, seriesId: item.series_id ?? item.id, sessionId: req.body.sessionId });
     });
     return res.json({ kind, total: rawItems.length, loaded: items.length, items });
   } catch (error) {
@@ -448,7 +484,7 @@ app.post("/api/xtream/epg", async (req, res) => {
       .filter(Boolean))].slice(0, 10);
     if (!streamIds.length) return res.json({ items: {} });
     const results = await Promise.allSettled(streamIds.map(async (streamId) => {
-      const url = `${xtreamApi(session.base, session.username, session.password, "get_short_epg")}&stream_id=${encodeURIComponent(streamId)}&limit=3`;
+      const url = `${xtreamApi(session.base, session.username, session.password, "get_short_epg", session.apiPath)}&stream_id=${encodeURIComponent(streamId)}&limit=3`;
       const payload = await safeFetch(url, { maxBytes: 1_500_000, asJson: true, timeoutMs: 20_000 });
       const listings = (Array.isArray(payload?.epg_listings) ? payload.epg_listings : Array.isArray(payload) ? payload : [])
         .map(normalizeEpgListing)
@@ -471,34 +507,79 @@ app.post("/api/xtream/epg", async (req, res) => {
   }
 });
 
+function seriesPayload(session, info) {
+  const seriesInfo = info?.info || info?.series_info || {};
+  const seasonEntries = Array.isArray(info?.episodes) ? [["1", info.episodes]] : Object.entries(info?.episodes || {});
+  const episodes = seasonEntries.flatMap(([season, entries]) => payloadArray(entries, ["episodes", "items", "data"]).map((episode) => {
+    const extension = String(episode.container_extension || episode.extension || "mp4").replace(/[^a-z0-9]/gi, "") || "mp4";
+    const episodeId = episode.id ?? episode.stream_id ?? episode.episode_id;
+    return proxiedItem({
+      id: episodeId,
+      name: episode.title || episode.name || `Episódio ${episode.episode_num || episodeId}`,
+      group: `Temporada ${episode.season ?? season}`,
+      season: episode.season ?? season,
+      logo: episode.info?.movie_image || episode.movie_image || seriesInfo.cover || seriesInfo.cover_big,
+      description: episode.info?.plot || episode.plot || episode.description || seriesInfo.plot || seriesInfo.description,
+      rating: episode.info?.rating || episode.rating || seriesInfo.rating,
+      year: episode.info?.releasedate || episode.releasedate || seriesInfo.releaseDate || seriesInfo.year,
+      url: `${session.base}/series/${encodeURIComponent(session.username)}/${encodeURIComponent(session.password)}/${episodeId}.${extension}`,
+      streamType: extension === "m3u8" ? "hls" : "video"
+    });
+  })).filter((episode) => episode.id && episode.playUrl).sort((a, b) => (a.season - b.season) || String(a.id).localeCompare(String(b.id), undefined, { numeric: true }));
+  return {
+    name: safeLabel(seriesInfo.name || seriesInfo.title || "Série"),
+    description: safeText(seriesInfo.plot || seriesInfo.description),
+    rating: safeLabel(seriesInfo.rating || "", ""),
+    genre: safeLabel(seriesInfo.genre || "", ""),
+    year: safeLabel(seriesInfo.releaseDate || seriesInfo.releasedate || seriesInfo.year || "", ""),
+    logo: seriesInfo.cover || seriesInfo.cover_big ? registerStream(seriesInfo.cover || seriesInfo.cover_big, "image") : "",
+    episodes: episodes.slice(0, 700)
+  };
+}
+
+app.post("/api/xtream/details", async (req, res) => {
+  try {
+    const session = getXtreamSession(req.body?.sessionId);
+    const kind = req.body?.kind === "series" ? "series" : "movies";
+    const itemId = String(req.body?.itemId || "").replace(/[^0-9]/g, "");
+    if (!itemId) return res.status(400).json({ error: "Conteúdo inválido." });
+    if (kind === "series") {
+      const info = await safeFetch(`${xtreamApi(session.base, session.username, session.password, "get_series_info", session.apiPath)}&series_id=${encodeURIComponent(itemId)}`, { maxBytes: 18_000_000, asJson: true, timeoutMs: 45_000 });
+      const payload = seriesPayload(session, info);
+      return res.json({
+        name: payload.name,
+        description: payload.description,
+        rating: payload.rating,
+        genre: payload.genre,
+        year: payload.year,
+        logo: payload.logo,
+        firstEpisode: payload.episodes[0] || null
+      });
+    }
+    const payload = await safeFetch(`${xtreamApi(session.base, session.username, session.password, "get_vod_info", session.apiPath)}&vod_id=${encodeURIComponent(itemId)}`, { maxBytes: 6_000_000, asJson: true, timeoutMs: 35_000 });
+    const movie = payload?.movie_data || payload?.movie || {};
+    const info = payload?.info || payload?.vod_info || {};
+    const logo = info.movie_image || info.cover_big || info.cover || movie.stream_icon || movie.cover || "";
+    return res.json({
+      name: safeLabel(movie.name || info.name || info.title || "Filme"),
+      description: safeText(info.plot || info.description || movie.plot || movie.description),
+      rating: safeLabel(info.rating || info.rating_5based || movie.rating || "", ""),
+      genre: safeLabel(info.genre || movie.genre || "", ""),
+      year: safeLabel(info.year || info.releasedate || info.releaseDate || movie.year || "", ""),
+      logo: logo ? registerStream(logo, "image") : ""
+    });
+  } catch (error) {
+    return res.status(422).json({ error: error.message || "Não foi possível carregar os detalhes." });
+  }
+});
+
 app.post("/api/xtream/series", async (req, res) => {
   try {
     const session = getXtreamSession(req.body?.sessionId);
     const seriesId = String(req.body?.seriesId || "").replace(/[^0-9]/g, "");
     if (!seriesId) return res.status(400).json({ error: "Série inválida." });
-    const info = await safeFetch(`${xtreamApi(session.base, session.username, session.password, "get_series_info")}&series_id=${encodeURIComponent(seriesId)}`, { maxBytes: 18_000_000, asJson: true, timeoutMs: 45_000 });
-    const episodes = Object.entries(info?.episodes || {}).flatMap(([season, entries]) => (Array.isArray(entries) ? entries : []).map((episode) => {
-      const extension = String(episode.container_extension || "mp4").replace(/[^a-z0-9]/gi, "") || "mp4";
-      return proxiedItem({
-        id: episode.id,
-        name: episode.title || `Episódio ${episode.episode_num || episode.id}`,
-        group: `Temporada ${season}`,
-        season,
-        logo: info?.info?.cover,
-        description: episode.info?.plot || episode.plot || info?.info?.plot,
-        rating: episode.info?.rating || info?.info?.rating,
-        year: episode.info?.releasedate || info?.info?.releaseDate,
-        url: `${session.base}/series/${encodeURIComponent(session.username)}/${encodeURIComponent(session.password)}/${episode.id}.${extension}`,
-        streamType: extension === "m3u8" ? "hls" : "video"
-      });
-    }));
-    return res.json({
-      name: safeLabel(info?.info?.name || "Série"),
-      description: safeText(info?.info?.plot || info?.info?.description),
-      rating: safeLabel(info?.info?.rating || "", ""),
-      genre: safeLabel(info?.info?.genre || "", ""),
-      episodes: episodes.slice(0, 700)
-    });
+    const info = await safeFetch(`${xtreamApi(session.base, session.username, session.password, "get_series_info", session.apiPath)}&series_id=${encodeURIComponent(seriesId)}`, { maxBytes: 18_000_000, asJson: true, timeoutMs: 45_000 });
+    return res.json(seriesPayload(session, info));
   } catch (error) {
     return res.status(422).json({ error: error.message || "Não foi possível carregar os episódios." });
   }
