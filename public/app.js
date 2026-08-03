@@ -710,16 +710,16 @@ function adaptiveHlsOptions(preview = false) {
     startLevel: -1,
     capLevelToPlayerSize: true,
     enableWorker: true,
-    lowLatencyMode: true,
-    backBufferLength: preview ? 15 : 30,
-    maxBufferLength: preview ? 20 : 36,
-    maxMaxBufferLength: preview ? 36 : 72,
-    abrBandWidthFactor: .9,
-    abrBandWidthUpFactor: .75,
-    abrEwmaDefaultEstimate: 5_000_000,
-    manifestLoadingTimeOut: 20_000,
-    levelLoadingTimeOut: 20_000,
-    fragLoadingTimeOut: 25_000
+    lowLatencyMode: false,
+    backBufferLength: preview ? 30 : 60,
+    maxBufferLength: preview ? 36 : 72,
+    maxMaxBufferLength: preview ? 72 : 180,
+    abrBandWidthFactor: .82,
+    abrBandWidthUpFactor: .65,
+    abrEwmaDefaultEstimate: 3_500_000,
+    manifestLoadingTimeOut: 30_000,
+    levelLoadingTimeOut: 30_000,
+    fragLoadingTimeOut: 35_000
   };
 }
 
@@ -803,11 +803,11 @@ async function playStream(itemOrUrl, name = "Reproduzindo", streamType = "auto",
     });
     hls.on(window.Hls.Events.ERROR, (_event, data) => {
       if (!data.fatal) return;
-      if (data.type === window.Hls.ErrorTypes.NETWORK_ERROR && networkRetries < 1) {
+      if (data.type === window.Hls.ErrorTypes.NETWORK_ERROR && networkRetries < 3) {
         networkRetries += 1;
         showPlayerStatus("Reconectando ao canal…");
-        setTimeout(() => hls.startLoad(), 1200);
-      } else if (data.type === window.Hls.ErrorTypes.MEDIA_ERROR && mediaRetries < 1) {
+        setTimeout(() => hls.startLoad(), 1200 * networkRetries);
+      } else if (data.type === window.Hls.ErrorTypes.MEDIA_ERROR && mediaRetries < 2) {
         mediaRetries += 1;
         showPlayerStatus("Ajustando o formato do vídeo…");
         hls.recoverMediaError();
@@ -886,6 +886,7 @@ function openLiveFullscreen() {
   if (request) {
     try { request.call(stage?.requestFullscreen || stage?.webkitRequestFullscreen ? stage : preview); preview.play().catch(() => {}); return; } catch {}
   }
+  stopLivePreview();
   playStream(state.selectedLive, "Reproduzindo", "auto", { immersive: true });
 }
 
