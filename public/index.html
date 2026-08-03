@@ -7,7 +7,7 @@
   <meta name="description" content="GATE IPTV PLAYER — conecte suas próprias fontes autorizadas em Smart TVs." />
   <link rel="icon" href="/gate-icon.svg" />
   <link rel="manifest" href="/manifest.webmanifest" />
-  <link rel="stylesheet" href="/styles.css?v=0.4.1" />
+  <link rel="stylesheet" href="/styles.css?v=0.4.2" />
   <title>GATE IPTV PLAYER</title>
 </head>
 <body>
@@ -46,7 +46,7 @@
       </div>
 
       <form id="xtream-form" class="source-form">
-        <label>Servidor<input class="focusable" data-focusable name="serverUrl" type="url" placeholder="http://servidor:porta" required /></label>
+        <label>Servidor<input class="focusable" data-focusable name="serverUrl" type="text" inputmode="url" enterkeyhint="next" autocapitalize="none" autocorrect="off" autocomplete="url" spellcheck="false" placeholder="servidor.com:porta" required /></label>
         <div class="form-grid">
           <label>Usuário<input class="focusable" data-focusable name="username" autocomplete="username" required /></label>
           <label>Senha<input class="focusable" data-focusable name="password" type="password" autocomplete="current-password" required /></label>
@@ -78,7 +78,7 @@
   <section class="modal hidden" id="player-modal" role="dialog" aria-modal="true" aria-label="Player de vídeo">
     <div class="player-shell">
       <button class="player-close focusable" data-focusable aria-label="Fechar player">×</button>
-      <video id="video-player" controls autoplay playsinline></video>
+      <video id="video-player" autoplay playsinline></video>
       <div class="player-status hidden" id="player-status" role="status" aria-live="polite">
         <i class="player-spinner"></i>
         <strong id="player-status-text">Abrindo o canal…</strong>
@@ -123,7 +123,7 @@
   </section>
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
-  <script src="/vendor/hls.min.js?v=0.4.1"></script>
-  <script src="/app.js?v=0.4.1"></script>
+  <script src="/vendor/hls.min.js?v=0.4.2"></script>
+  <script src="/app.js?v=0.4.2"></script>
 </body>
 </html>

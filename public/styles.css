@@ -147,14 +147,12 @@ h1 { margin: 0; letter-spacing: -.035em; }
 .live-channel-row > b .ui-icon { width: 18px; }
 
 .live-preview-panel { min-width: 0; height: 100%; padding: 12px; border: 1px solid var(--line); border-radius: 15px; background: rgba(8,14,25,.92); overflow-y: auto; }
-.live-preview-stage { position: relative; aspect-ratio: 16 / 9; border-radius: 12px; overflow: hidden; background: #010204; }
+.live-preview-stage { position: relative; aspect-ratio: 16 / 9; border-radius: 12px; overflow: hidden; background: #010204; cursor: pointer; }
 .live-preview-stage video { width: 100%; height: 100%; object-fit: contain; background: #000; }
 .preview-placeholder { display: none; position: absolute; inset: 0; place-items: center; align-content: center; gap: 12px; background: radial-gradient(circle at 50% 45%, #152a48, #03060b 70%); color: var(--muted); text-align: center; }
 .preview-placeholder.visible { display: grid; }
 .preview-placeholder img { width: min(32%, 120px); max-height: 80px; object-fit: contain; }
 .preview-icon { width: 64px; height: 64px; color: var(--blue); opacity: .8; }
-.fullscreen-button { position: absolute; right: 10px; bottom: 10px; min-height: 38px; display: flex; align-items: center; gap: 7px; border: 1px solid rgba(255,255,255,.19); border-radius: 9px; background: rgba(3,7,14,.82); padding: 8px 11px; cursor: pointer; }
-.fullscreen-button .ui-icon { width: 18px; }
 .live-channel-title { display: flex; align-items: center; gap: 12px; padding: 15px 2px 11px; border-bottom: 1px solid var(--line); }
 .live-channel-title > div { min-width: 0; display: grid; gap: 3px; }
 .live-channel-title strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 18px; }
@@ -201,6 +199,11 @@ h1 { margin: 0; letter-spacing: -.035em; }
 .player-meta p { grid-column: 1 / -1; margin: 0; }
 .player-status { position: absolute; inset: 0 0 50px; display: grid; place-items: center; align-content: center; gap: 15px; border-radius: 15px; background: rgba(0,0,0,.75); z-index: 2; }
 .player-status.ready .player-spinner, .player-status.error .player-spinner { display: none; }
+.player-modal-immersive { padding: 0; background: #000; }
+.player-modal-immersive .player-shell { width: 100vw; height: 100vh; }
+.player-modal-immersive .player-shell video { width: 100%; height: 100%; max-height: none; aspect-ratio: auto; border-radius: 0; box-shadow: none; object-fit: contain; }
+.player-modal-immersive .player-close, .player-modal-immersive .player-meta { display: none; }
+.player-modal-immersive .player-status { inset: 0; border-radius: 0; }
 
 .details-modal { padding: clamp(14px, 3vw, 42px); background: rgba(1,4,9,.92); }
 .details-card { width: min(1180px, 96vw); min-height: min(680px, 90vh); position: relative; overflow: hidden; border: 1px solid rgba(255,255,255,.14); border-radius: 24px; background: #070d18; box-shadow: 0 35px 120px #000; }
