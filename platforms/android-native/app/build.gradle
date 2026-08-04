@@ -1,0 +1,18 @@
+plugins { id 'com.android.application' }
+
+android {
+    namespace 'com.gateone.app.gateiptvplayer'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'com.gateone.app.gateiptvplayer'
+        minSdk 23
+        targetSdk 35
+        versionCode 43
+        versionName '0.4.3'
+    }
+}
+
+dependencies {
+    implementation 'org.videolan.android:libvlc-all:3.6.0-eap18'
+}
