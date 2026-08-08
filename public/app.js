@@ -1,4 +1,4 @@
-const APP_VERSION = "0.5.1";
+const APP_VERSION = "0.5.2-web";
 const CACHE_DB = "gate-player-cache-v1";
 const CACHE_STORE = "device";
 const FAVORITES_KEY = "gate.favorites.v1";
@@ -885,10 +885,10 @@ function streamCandidates(item) {
     if (!resolved || candidates.some((candidate) => candidate.url === resolved)) return;
     candidates.push({ url: resolved, type: type || "auto", direct });
   };
-  add(item?.playUrl, item?.streamType, true);
   add(item?.playUrl, item?.streamType, false);
-  add(item?.fallbackPlayUrl, item?.fallbackStreamType, true);
+  add(item?.playUrl, item?.streamType, true);
   add(item?.fallbackPlayUrl, item?.fallbackStreamType, false);
+  add(item?.fallbackPlayUrl, item?.fallbackStreamType, true);
   return candidates;
 }
 
@@ -985,6 +985,25 @@ function playbackStatus(session, message, type = "loading") {
   if (!session.preview) showPlayerStatus(message, type);
 }
 
+function bufferedAhead(media) {
+  const currentTime = Number(media?.currentTime);
+  if (!Number.isFinite(currentTime) || !media?.buffered) return 0;
+  try {
+    for (let index = 0; index < media.buffered.length; index += 1) {
+      const start = media.buffered.start(index);
+      const end = media.buffered.end(index);
+      if (currentTime >= start - .25 && currentTime <= end + .25) return Math.max(0, end - currentTime);
+    }
+  } catch {}
+  return 0;
+}
+
+function markPlaybackProgress(session) {
+  session.lastProgressAt = Date.now();
+  session.starvedAt = 0;
+  session.stallRetries = 0;
+}
+
 function advanceWebCandidate(session, message) {
   if (!session || session.destroyed || session.switching) return;
   session.switching = true;
@@ -1006,6 +1025,7 @@ function retryWebCandidate(session, message) {
   session.networkRetries = 0;
   session.mediaRetries = 0;
   session.lastProgressAt = Date.now();
+  session.starvedAt = 0;
   playbackStatus(session, message || "Reconectando o canal…");
   setTimeout(() => {
     session.switching = false;
@@ -1022,6 +1042,7 @@ function startWebCandidate(session, reason = "") {
     return;
   }
   session.lastProgressAt = Date.now();
+  session.starvedAt = 0;
   session.lastTime = -1;
   session.lastDecodedFrames = -1;
   session.started = false;
@@ -1038,6 +1059,9 @@ function startWebCandidate(session, reason = "") {
     hls.on(window.Hls.Events.LEVEL_SWITCHED, (_event, data) => {
       if (!session.preview) updatePlayerQuality(hls.levels?.[data.level]?.height || session.media.videoHeight);
     });
+    if (window.Hls.Events.FRAG_BUFFERED) {
+      hls.on(window.Hls.Events.FRAG_BUFFERED, () => { session.lastDataAt = Date.now(); });
+    }
     hls.on(window.Hls.Events.ERROR, (_event, data) => {
       if (!data.fatal || session.destroyed) return;
       if (!candidate.direct && data.type === window.Hls.ErrorTypes.NETWORK_ERROR && session.networkRetries < 2) {
@@ -1078,10 +1102,13 @@ function startWebCandidate(session, reason = "") {
       player.on(window.mpegts.Events.ERROR, () => advanceWebCandidate(session, "O fluxo TS não respondeu nesta rota."));
       if (window.mpegts.Events.STATISTICS_INFO) {
         player.on(window.mpegts.Events.STATISTICS_INFO, (info) => {
-          const frames = Number(info?.decodedFrames ?? info?.decodedFramesDelta ?? -1);
-          if (frames >= 0 && frames !== session.lastDecodedFrames) {
-            session.lastDecodedFrames = frames;
-            session.lastProgressAt = Date.now();
+          const totalFrames = Number(info?.decodedFrames);
+          const frameDelta = Number(info?.decodedFramesDelta);
+          if (Number.isFinite(totalFrames) && totalFrames >= 0 && totalFrames !== session.lastDecodedFrames) {
+            session.lastDecodedFrames = totalFrames;
+            markPlaybackProgress(session);
+          } else if (Number.isFinite(frameDelta) && frameDelta > 0) {
+            markPlaybackProgress(session);
           }
         });
       }
@@ -1115,6 +1142,8 @@ function startWebPlayback(media, item, { preview = false } = {}) {
     lastProgressAt: Date.now(),
     lastTime: -1,
     started: false,
+    starvedAt: 0,
+    lastDataAt: Date.now(),
     networkRetries: 0,
     mediaRetries: 0,
     stallRetries: 0
@@ -1122,29 +1151,44 @@ function startWebPlayback(media, item, { preview = false } = {}) {
   const listen = (name, handler) => { media.addEventListener(name, handler); session.listeners.push([name, handler]); };
   listen("playing", () => {
     session.started = true;
-    session.lastProgressAt = Date.now();
+    markPlaybackProgress(session);
     if (!preview) hidePlayerStatus();
   });
+  listen("canplay", () => markPlaybackProgress(session));
   listen("timeupdate", () => {
     if (Math.abs(media.currentTime - session.lastTime) < .08) return;
     session.lastTime = media.currentTime;
-    session.lastProgressAt = Date.now();
+    markPlaybackProgress(session);
   });
-  listen("waiting", () => playbackStatus(session, "Sinal oscilando. Ajustando a rota…"));
-  listen("stalled", () => playbackStatus(session, "Sinal parado. Reconectando…"));
+  listen("progress", () => { session.lastDataAt = Date.now(); });
+  listen("waiting", () => {
+    if (!session.starvedAt) session.starvedAt = Date.now();
+    playbackStatus(session, "Sinal oscilando. Aguardando o buffer…");
+  });
+  listen("stalled", () => {
+    if (!session.starvedAt) session.starvedAt = Date.now();
+    playbackStatus(session, "Sinal temporariamente sem dados…");
+  });
   listen("error", () => advanceWebCandidate(session, "Este formato não abriu nesta rota."));
   session.watchdog = setInterval(() => {
     if (session.destroyed || session.switching || media.paused || document.hidden) return;
-    const limit = preview ? 15_000 : 20_000;
-    if (Date.now() - session.lastProgressAt <= limit) return;
+    const now = Date.now();
+    const haveFutureData = Number(media.readyState) >= 3 || bufferedAhead(media) > 1.25;
+    if (haveFutureData) {
+      session.starvedAt = 0;
+      return;
+    }
+    if (!session.starvedAt && now - session.lastProgressAt > 12_000) session.starvedAt = now;
+    const starvationLimit = preview ? 28_000 : 35_000;
+    if (!session.starvedAt || now - session.starvedAt <= starvationLimit) return;
     if (session.stallRetries < 1) {
       session.stallRetries += 1;
-      retryWebCandidate(session, "O canal congelou. Refazendo a conexão atual…");
+      retryWebCandidate(session, "O sinal ficou sem dados. Refazendo a conexão atual…");
       return;
     }
     session.stallRetries = 0;
-    advanceWebCandidate(session, "O canal congelou. Mudando a rota de reprodução…");
-  }, 2500);
+    advanceWebCandidate(session, "A rota ficou sem dados. Tentando a alternativa…");
+  }, 3000);
   state[slot] = session;
   startWebCandidate(session);
   return session;
