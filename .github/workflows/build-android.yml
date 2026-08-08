@@ -54,13 +54,19 @@ jobs:
 
       - name: Prepare APK and checksum
         run: |
+          set -euo pipefail
           mkdir -p dist
-          cp platforms/android-native/app/build/outputs/apk/debug/app-debug.apk dist/GATE-TV-v0.5.0-TCL-BlueStacks.apk
+          install -m 0444 platforms/android-native/app/build/outputs/apk/debug/app-debug.apk dist/GATE-TV-v0.5.0-TCL-BlueStacks.apk
+          unzip -tq dist/GATE-TV-v0.5.0-TCL-BlueStacks.apk
+          "$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -P 16 4 dist/GATE-TV-v0.5.0-TCL-BlueStacks.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose dist/GATE-TV-v0.5.0-TCL-BlueStacks.apk
           sha256sum dist/GATE-TV-v0.5.0-TCL-BlueStacks.apk | tee dist/GATE-TV-v0.5.0-SHA256.txt
+          sha256sum -c dist/GATE-TV-v0.5.0-SHA256.txt
 
       - uses: actions/upload-artifact@v4
         with:
           name: GATE-TV-v0.5.0-TCL-BlueStacks
           path: dist/GATE-TV-v0.5.0-*
           if-no-files-found: error
+          compression-level: 0
           retention-days: 90
