@@ -10,9 +10,10 @@ import helmet from "helmet";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const port = Number(process.env.PORT || 3000);
+const APP_VERSION = "0.5.0";
 const MAX_CATALOG_ITEMS = 2000;
 const MAX_LIVE_ITEMS = 6000;
-const SESSION_TTL = 6 * 60 * 60 * 1000;
+const SESSION_TTL = 24 * 60 * 60 * 1000;
 
 app.disable("x-powered-by");
 app.set("trust proxy", 1);
@@ -86,7 +87,7 @@ async function openRemote(rawUrl, { headers = {}, timeoutMs = 20_000 } = {}) {
     for (let redirect = 0; redirect < 5; redirect += 1) {
       const response = await fetch(current, {
         redirect: "manual",
-        headers: { "user-agent": "GATE-IPTV-PLAYER/0.2", ...headers },
+        headers: { "user-agent": `GATE-IPTV-PLAYER/${APP_VERSION}`, ...headers },
         signal: controller.signal
       });
       if (response.status >= 300 && response.status < 400 && response.headers.get("location")) {
@@ -232,7 +233,7 @@ function streamTypeFor(url, fallback = "auto") {
   return fallback;
 }
 
-function proxiedItem({ id, name, group, logo, url, streamType, seriesId, sessionId, season, description, rating, year, genre, epgChannelId }) {
+function proxiedItem({ id, name, group, logo, url, streamType, fallbackUrl, fallbackStreamType, seriesId, sessionId, season, description, rating, year, genre, epgChannelId }) {
   return {
     ...(id != null ? { id: String(id) } : {}),
     name: safeLabel(name),
@@ -240,6 +241,10 @@ function proxiedItem({ id, name, group, logo, url, streamType, seriesId, session
     logo: logo ? registerStream(String(logo).slice(0, 1800), "image") : "",
     playUrl: url ? registerStream(url) : "",
     streamType: streamType || (url ? streamTypeFor(url) : "auto"),
+    ...(fallbackUrl ? {
+      fallbackPlayUrl: registerStream(fallbackUrl),
+      fallbackStreamType: fallbackStreamType || streamTypeFor(fallbackUrl)
+    } : {}),
     ...(seriesId != null ? { seriesId: String(seriesId) } : {}),
     ...(sessionId ? { sessionId } : {}),
     ...(season != null ? { season: Number(season) || 0 } : {}),
@@ -332,7 +337,9 @@ async function connectXtream({ serverUrl, username, password, source = "xtream" 
   }
   const liveCategories = categoryMap(categoriesResult.status === "fulfilled" ? categoriesResult.value : []);
   const formats = Array.isArray(userInfo.allowed_output_formats) ? userInfo.allowed_output_formats : String(userInfo.allowed_output_formats || "").split(/[,|\s]+/);
-  const extension = formats.some((format) => String(format).toLowerCase() === "m3u8") ? "m3u8" : "ts";
+  const supportsHls = formats.some((format) => String(format).toLowerCase() === "m3u8");
+  const supportsTs = !formats.length || formats.some((format) => ["ts", "mpegts", "mpeg-ts"].includes(String(format).toLowerCase()));
+  const extension = supportsHls ? "m3u8" : "ts";
   const sessionId = crypto.randomBytes(18).toString("base64url");
   xtreamSessions.set(sessionId, { base, username, password, apiPath, expiresAt: Date.now() + SESSION_TTL });
   const channels = live.slice(0, MAX_LIVE_ITEMS).map((item) => proxiedItem({
@@ -342,7 +349,11 @@ async function connectXtream({ serverUrl, username, password, source = "xtream" 
     group: liveCategories.get(String(item.category_id ?? item.category)) || item.category_name || item.group || "Ao vivo",
     epgChannelId: item.epg_channel_id || item.tvg_id,
     url: `${base}/live/${encodeURIComponent(username)}/${encodeURIComponent(password)}/${item.stream_id ?? item.id}.${extension}`,
-    streamType: extension === "m3u8" ? "hls" : "mpegts"
+    streamType: extension === "m3u8" ? "hls" : "mpegts",
+    fallbackUrl: supportsHls && supportsTs
+      ? `${base}/live/${encodeURIComponent(username)}/${encodeURIComponent(password)}/${item.stream_id ?? item.id}.ts`
+      : "",
+    fallbackStreamType: "mpegts"
   }));
   return {
     source,
@@ -402,7 +413,7 @@ function rewriteManifest(text, baseUrl) {
   }).join("\n");
 }
 
-app.get("/health", (_req, res) => res.json({ ok: true, service: "gate-iptv-player", version: "0.4.2" }));
+app.get("/health", (_req, res) => res.json({ ok: true, service: "gate-iptv-player", version: APP_VERSION }));
 app.get("/api/config", (_req, res) => res.json({ annualPrice: 30, adDurationSeconds: 10, paymentAvailable: Boolean(process.env.PAYMENT_LINK_URL) }));
 
 app.post("/api/m3u/parse", async (req, res) => {
@@ -615,6 +626,12 @@ app.get("/api/stream/:token", async (req, res) => {
   const entry = streamTickets.get(req.params.token);
   if (!entry || entry.expiresAt <= Date.now()) return res.status(404).json({ error: "Este link de reprodução expirou. Conecte a lista novamente." });
   entry.expiresAt = Date.now() + SESSION_TTL;
+  const nativeClient = /GATE-TV-NATIVE/i.test(String(req.headers["user-agent"] || ""));
+  if (entry.kind !== "image" && (nativeClient || req.query.direct === "1")) {
+    res.setHeader("cache-control", "private, no-store");
+    res.setHeader("x-gate-route", "direct");
+    return res.redirect(307, entry.url);
+  }
   try {
     const headers = entry.kind === "image"
       ? { accept: "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8" }
@@ -641,6 +658,7 @@ app.get("/api/stream/:token", async (req, res) => {
     const manifest = /mpegurl|m3u8/i.test(contentType) || /\.m3u8($|\?)/i.test(remote.finalUrl.toString());
     res.status(response.status);
     res.setHeader("cache-control", "no-store");
+    res.setHeader("x-gate-route", "proxy");
     res.setHeader("accept-ranges", response.headers.get("accept-ranges") || "bytes");
     if (manifest) {
       try {
@@ -696,6 +714,7 @@ setInterval(() => {
 }, 10 * 60 * 1000).unref();
 
 app.use("/vendor/hls.min.js", express.static(path.join(__dirname, "node_modules/hls.js/dist/hls.min.js")));
+app.use("/vendor/mpegts.min.js", express.static(path.join(__dirname, "node_modules/mpegts.js/dist/mpegts.js")));
 app.use(express.static(path.join(__dirname, "public"), {
   maxAge: "1h",
   setHeaders(res, filePath) {
