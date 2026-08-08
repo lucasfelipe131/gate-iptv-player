@@ -36,7 +36,7 @@ import androidx.media3.exoplayer.DefaultLoadControl;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
 import androidx.media3.extractor.DefaultExtractorsFactory;
-import androidx.media3.extractor.ts.TsExtractor;
+import androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory;
 import androidx.media3.ui.PlayerView;
 
 import org.videolan.libvlc.LibVLC;
@@ -307,9 +307,11 @@ public final class MainActivity extends Activity {
                 .setAllowCrossProtocolRedirects(true);
         DefaultDataSource.Factory dataSourceFactory = new DefaultDataSource.Factory(this, httpFactory);
         DefaultExtractorsFactory extractorsFactory = new DefaultExtractorsFactory()
-                .setTsExtractorFlags(TsExtractor.FLAG_DETECT_ACCESS_UNITS | TsExtractor.FLAG_ALLOW_NON_IDR_KEYFRAMES);
-        DefaultMediaSourceFactory sourceFactory = new DefaultMediaSourceFactory(dataSourceFactory)
-                .setExtractorsFactory(extractorsFactory);
+                .setTsExtractorFlags(
+                        DefaultTsPayloadReaderFactory.FLAG_DETECT_ACCESS_UNITS
+                                | DefaultTsPayloadReaderFactory.FLAG_ALLOW_NON_IDR_KEYFRAMES);
+        DefaultMediaSourceFactory sourceFactory = new DefaultMediaSourceFactory(this, extractorsFactory)
+                .setDataSourceFactory(dataSourceFactory);
         DefaultLoadControl loadControl = new DefaultLoadControl.Builder()
                 .setBufferDurationsMs(2_000, 18_000, 650, 1_200)
                 .setPrioritizeTimeOverSizeThresholds(true)
