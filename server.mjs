@@ -10,7 +10,7 @@ import helmet from "helmet";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const port = Number(process.env.PORT || 3000);
-const APP_VERSION = "0.5.0";
+const APP_VERSION = "0.5.2-web";
 const MAX_CATALOG_ITEMS = 2000;
 const MAX_LIVE_ITEMS = 6000;
 const SESSION_TTL = 24 * 60 * 60 * 1000;
@@ -675,7 +675,9 @@ app.get("/api/stream/:token", async (req, res) => {
       if (value) res.setHeader(header, value);
     }
     if (!response.body) return res.end();
-    Readable.fromWeb(response.body).on("error", () => { if (!res.headersSent) res.sendStatus(502); else res.end(); }).pipe(res);
+    const upstream = Readable.fromWeb(response.body);
+    res.once("close", () => { if (!res.writableEnded) upstream.destroy(); });
+    upstream.on("error", () => { if (!res.headersSent) res.sendStatus(502); else res.end(); }).pipe(res);
   } catch (error) {
     if (!res.headersSent) res.status(502).json({ error: error.message || "A fonte não respondeu ao player." });
     else res.end();
