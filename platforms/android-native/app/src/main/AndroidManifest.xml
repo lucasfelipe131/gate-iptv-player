@@ -1,7 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-feature android:name="android.software.leanback" android:required="false" />
-    <application android:allowBackup="false" android:hardwareAccelerated="true" android:label="GATE IPTV PLAYER" android:usesCleartextTraffic="true" android:theme="@style/GateTheme">
+    <application android:allowBackup="false" android:hardwareAccelerated="true" android:label="GATE IPTV PLAYER" android:largeHeap="true" android:usesCleartextTraffic="true" android:theme="@style/GateTheme">
         <activity android:name=".MainActivity" android:configChanges="orientation|screenSize|keyboardHidden" android:exported="true" android:screenOrientation="unspecified">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
