@@ -7,7 +7,7 @@
   <meta name="description" content="GATE IPTV PLAYER — conecte suas próprias fontes autorizadas em Smart TVs." />
   <link rel="icon" href="/gate-icon.svg" />
   <link rel="manifest" href="/manifest.webmanifest" />
-  <link rel="stylesheet" href="/styles.css?v=0.4.2" />
+  <link rel="stylesheet" href="/styles.css?v=0.5.0" />
   <title>GATE IPTV PLAYER</title>
 </head>
 <body>
@@ -22,6 +22,7 @@
         <button class="nav-item focusable" data-action="open-live" data-focusable><span class="nav-icon">●</span><span>Ao vivo</span></button>
         <button class="nav-item focusable" data-action="open-movies" data-focusable><span class="nav-icon">▶</span><span>Filmes</span></button>
         <button class="nav-item focusable" data-action="open-series" data-focusable><span class="nav-icon">▣</span><span>Séries</span></button>
+        <button class="nav-item focusable" data-action="open-favorites" data-focusable><span class="nav-icon">★</span><span>Favoritos</span></button>
       </nav>
       <div class="sidebar-bottom">
         <button class="nav-item focusable" data-action="open-source" data-focusable><span class="nav-icon">＋</span><span>Trocar lista</span></button>
@@ -103,6 +104,7 @@
           <p class="details-synopsis" id="details-synopsis">Sinopse não informada pela lista.</p>
           <div class="button-row">
             <button class="primary-button details-primary focusable" id="details-primary" data-focusable>Assistir</button>
+            <button class="secondary-button favorite-button focusable" id="details-favorite" data-focusable>☆ Favoritar</button>
             <button class="secondary-button focusable" id="details-cancel" data-focusable>Voltar</button>
           </div>
         </div>
@@ -123,7 +125,8 @@
   </section>
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
-  <script src="/vendor/hls.min.js?v=0.4.2"></script>
-  <script src="/app.js?v=0.4.2"></script>
+  <script src="/vendor/hls.min.js?v=0.5.0"></script>
+  <script src="/vendor/mpegts.min.js?v=0.5.0"></script>
+  <script src="/app.js?v=0.5.0"></script>
 </body>
 </html>

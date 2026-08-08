@@ -1,3 +1,13 @@
+const APP_VERSION = "0.5.0";
+const CACHE_DB = "gate-player-cache-v1";
+const CACHE_STORE = "device";
+const FAVORITES_KEY = "gate.favorites.v1";
+
+function readJsonStorage(key, fallback) {
+  try { return JSON.parse(localStorage.getItem(key) || "") ?? fallback; }
+  catch { return fallback; }
+}
+
 const state = {
   config: { annualPrice: 30, adDurationSeconds: 10, paymentAvailable: false },
   source: null,
@@ -19,6 +29,8 @@ const state = {
   pageSize: 36,
   hls: null,
   previewHls: null,
+  webPlayer: null,
+  webPreview: null,
   selectedLive: null,
   detailsItem: null,
   detailsKind: null,
@@ -26,6 +38,9 @@ const state = {
   detailsInfoCache: new Map(),
   currentItem: null,
   lastFocused: null,
+  connectionDescriptor: null,
+  favorites: new Set(readJsonStorage(FAVORITES_KEY, [])),
+  activation: { key: "", at: 0 },
   adFree: localStorage.getItem("gate.adFree") === "true"
 };
 
@@ -36,6 +51,7 @@ const detailsModal = document.querySelector("#details-modal");
 const detailsPoster = document.querySelector("#details-poster");
 const detailsBackdrop = document.querySelector("#details-backdrop");
 const detailsPrimary = document.querySelector("#details-primary");
+const detailsFavorite = document.querySelector("#details-favorite");
 const sourceStatus = document.querySelector("#source-status");
 const video = document.querySelector("#video-player");
 const playerStatus = document.querySelector("#player-status");
@@ -54,6 +70,7 @@ function gateIcon(name, className = "ui-icon") {
     fullscreen: '<path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/>',
     back: '<path d="m15 18-6-6 6-6"/>',
     play: '<path d="m8 5 11 7-11 7Z"/>',
+    favorite: '<path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9Z"/>',
     refresh: '<path d="M20 11a8 8 0 1 0-2.34 5.66M20 4v7h-7"/>'
   };
   return `<svg class="${className}" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${paths[name] || paths.play}</svg>`;
@@ -77,12 +94,90 @@ async function api(path, options = {}) {
   return payload;
 }
 
+function openCacheDb() {
+  if (!globalThis.indexedDB) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    const request = indexedDB.open(CACHE_DB, 1);
+    request.onupgradeneeded = () => {
+      if (!request.result.objectStoreNames.contains(CACHE_STORE)) request.result.createObjectStore(CACHE_STORE);
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => resolve(null);
+  });
+}
+
+async function cacheRead(key) {
+  const db = await openCacheDb();
+  if (!db) return readJsonStorage(`gate.cache.${key}`, null);
+  return new Promise((resolve) => {
+    const request = db.transaction(CACHE_STORE, "readonly").objectStore(CACHE_STORE).get(key);
+    request.onsuccess = () => resolve(request.result || null);
+    request.onerror = () => resolve(null);
+  }).finally(() => db.close());
+}
+
+async function cacheWrite(key, value) {
+  const db = await openCacheDb();
+  if (!db) {
+    try {
+      const serialized = JSON.stringify(value);
+      if (serialized.length < 4_000_000) localStorage.setItem(`gate.cache.${key}`, serialized);
+    } catch {}
+    return;
+  }
+  await new Promise((resolve) => {
+    const transaction = db.transaction(CACHE_STORE, "readwrite");
+    transaction.objectStore(CACHE_STORE).put(value, key);
+    transaction.oncomplete = resolve;
+    transaction.onerror = resolve;
+    transaction.onabort = resolve;
+  });
+  db.close();
+}
+
+function favoriteKey(item, kind) {
+  const type = kind === "live" ? "live" : kind === "series" ? "series" : "movies";
+  const id = item?.seriesId || item?.id || item?.name;
+  return id ? `${type}:${String(id)}` : "";
+}
+
+function isFavorite(item, kind) {
+  const key = favoriteKey(item, kind);
+  return Boolean(key && state.favorites.has(key));
+}
+
+function persistFavorites() {
+  localStorage.setItem(FAVORITES_KEY, JSON.stringify([...state.favorites]));
+}
+
+function toggleFavorite(item, kind) {
+  const key = favoriteKey(item, kind);
+  if (!key) return false;
+  if (state.favorites.has(key)) state.favorites.delete(key);
+  else state.favorites.add(key);
+  persistFavorites();
+  syncFavoriteUi();
+  showToast(state.favorites.has(key) ? "Adicionado aos favoritos." : "Removido dos favoritos.");
+  return state.favorites.has(key);
+}
+
+function favoriteItems(kind) {
+  return currentItems(kind).filter((item) => isFavorite(item, kind));
+}
+
+function allowActivation(key, minimumGap = 420) {
+  const now = performance.now();
+  if (state.activation.key === key && now - state.activation.at < minimumGap) return false;
+  state.activation = { key, at: now };
+  return true;
+}
+
 function topbar() {
   const connected = state.source ? '<span class="pill connected-pill">● Lista conectada</span>' : '<span class="pill">Nenhuma lista conectada</span>';
   const expiry = state.source ? `<span class="pill expiry-pill">Validade: ${escapeHtml(formatExpiryDate(state.account?.expiresAt))}</span>` : "";
   return `<header class="topbar">
     <button class="top-brand focusable" data-action="go-home" data-focusable><img src="/gate-icon.svg" alt=""><span><strong>GATE</strong><small>IPTV PLAYER</small></span></button>
-    <div class="top-actions">${connected}${expiry}<button class="round-action focusable" data-action="open-source" data-focusable aria-label="Trocar lista">${gateIcon("settings")}</button></div>
+    <div class="top-actions">${connected}${expiry}${state.source ? `<button class="round-action focusable" data-action="open-favorites" data-focusable aria-label="Favoritos">${gateIcon("favorite")}</button>` : ""}<button class="round-action focusable" data-action="open-source" data-focusable aria-label="Trocar lista">${gateIcon("settings")}</button></div>
   </header>`;
 }
 
@@ -154,7 +249,28 @@ function renderConnectedSummary() {
       <button class="library-launch focusable live-launch" data-action="open-live" data-focusable><span class="launcher-icon">${gateIcon("live")}</span><span><strong>TV ao vivo</strong><small>${live.toLocaleString("pt-BR")} canais</small></span><b>›</b></button>
       <button class="library-launch focusable movies-launch" data-action="open-movies" data-focusable><span class="launcher-icon">${gateIcon("movies")}</span><span><strong>Filmes</strong><small>${escapeHtml(catalogLabel("movies", "filme"))}</small></span><b>›</b></button>
       <button class="library-launch focusable series-launch" data-action="open-series" data-focusable><span class="launcher-icon">${gateIcon("series")}</span><span><strong>Séries</strong><small>${escapeHtml(catalogLabel("series", "série"))}</small></span><b>›</b></button>
+      <button class="library-launch focusable favorites-launch" data-action="open-favorites" data-focusable><span class="launcher-icon">${gateIcon("favorite")}</span><span><strong>Favoritos</strong><small>${state.favorites.size.toLocaleString("pt-BR")} ${state.favorites.size === 1 ? "item salvo" : "itens salvos"}</small></span><b>›</b></button>
     </section>`;
+}
+
+function renderFavorites() {
+  stopLivePreview();
+  state.view = "favorites";
+  document.title = "Favoritos · GATE IPTV PLAYER";
+  const sections = [
+    ["live", "Canais"],
+    ["movies", "Filmes"],
+    ["series", "Séries"]
+  ];
+  const content = sections.map(([kind, label]) => {
+    const items = favoriteItems(kind);
+    if (!items.length) return "";
+    return `<section class="home-shelf ${kind}"><div class="home-shelf-head"><h2>${label}</h2><span>${items.length.toLocaleString("pt-BR")}</span></div><div class="catalog-grid ${kind === "live" ? "" : "poster-grid"}">${items.map((item) => mediaCard(item, kind)).join("")}</div></section>`;
+  }).filter(Boolean).join("");
+  main.innerHTML = `${topbar()}<section class="catalog-titlebar"><button class="round-action focusable" data-action="go-home" data-focusable aria-label="Voltar">${gateIcon("back")}</button><div><p class="eyebrow">SUA SELEÇÃO</p><h1>Favoritos</h1></div><span class="result-count">${state.favorites.size.toLocaleString("pt-BR")} salvos</span></section>${content || '<div class="empty-state">Nenhum favorito ainda. Abra um canal, filme ou série e pressione “Favoritar”.</div>'}`;
+  bindDynamicActions();
+  refreshFocusable();
+  setTimeout(() => main.querySelector(".media-card, [data-action=go-home]")?.focus(), 0);
 }
 
 function renderHomePreviews() {
@@ -191,6 +307,7 @@ function mediaRow(items, kind) {
 
 function mediaCard(item, kind) {
   const playable = Boolean(item.playUrl);
+  const favorite = isFavorite(item, kind);
   const seriesData = item.seriesId ? ` data-series-id="${escapeHtml(item.seriesId)}" data-session-id="${escapeHtml(item.sessionId || state.sessionId || "")}"` : "";
   const description = item.description || "";
   const detailsData = ` data-item-id="${escapeHtml(item.id || "")}" data-description="${escapeHtml(description)}"`;
@@ -203,8 +320,8 @@ function mediaCard(item, kind) {
     ? `<span class="card-epg card-now">${escapeHtml(current)}</span><span class="card-epg card-next">${escapeHtml(next)}</span>`
     : `<p class="card-synopsis">${escapeHtml(description || "Sinopse não informada pela lista.")}</p>`;
   const artwork = item.logo ? `<img class="card-artwork" src="${escapeHtml(item.logo)}" alt="" loading="lazy" decoding="async">` : "";
-  return `<button class="media-card focusable kind-${escapeHtml(kind)} ${item.logo ? "has-image" : "cover-missing"}" data-focusable data-item-kind="${escapeHtml(kind)}"${playable ? ` data-play-url="${escapeHtml(item.playUrl)}" data-stream-type="${escapeHtml(item.streamType || "auto")}"` : ""}${seriesData}${detailsData}${liveData} data-play-name="${escapeHtml(item.name)}">
-    ${artwork}<span class="play-dot">${item.seriesId ? "＋" : "▶"}</span><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(metadata)}</small>${extra}</button>`;
+  return `<button class="media-card focusable kind-${escapeHtml(kind)} ${item.logo ? "has-image" : "cover-missing"} ${favorite ? "is-favorite" : ""}" data-focusable data-item-kind="${escapeHtml(kind)}"${playable ? ` data-play-url="${escapeHtml(item.playUrl)}" data-stream-type="${escapeHtml(item.streamType || "auto")}"` : ""}${seriesData}${detailsData}${liveData} data-play-name="${escapeHtml(item.name)}">
+    ${artwork}${favorite ? '<span class="favorite-mark" aria-label="Favorito">★</span>' : ""}<span class="play-dot">${item.seriesId ? "＋" : "▶"}</span><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(metadata)}</small>${extra}</button>`;
 }
 
 function formatProgramTime(value) {
@@ -330,11 +447,12 @@ function renderCatalog(kind, heading = "", description = "") {
 
 function liveChannelRow(item) {
   const selected = String(state.selectedLive?.id || "") === String(item.id || "");
-  return `<button class="live-channel-row focusable ${selected ? "active" : ""}" data-focusable data-live-select="${escapeHtml(item.id || "")}" data-live-id="${escapeHtml(item.id || "")}">
+  const favorite = isFavorite(item, "live");
+  return `<button class="live-channel-row focusable ${selected ? "active" : ""} ${favorite ? "is-favorite" : ""}" data-focusable data-live-select="${escapeHtml(item.id || "")}" data-live-id="${escapeHtml(item.id || "")}">
     <span class="channel-number">${escapeHtml(item.id || "•")}</span>
     <span class="channel-logo">${item.logo ? `<img src="${escapeHtml(item.logo)}" alt="">` : gateIcon("live")}</span>
     <span><strong>${escapeHtml(item.name)}</strong><small class="card-now">Carregando guia…</small></span>
-    <b>${gateIcon("play")}</b>
+    <b>${favorite ? "★" : gateIcon("play")}</b>
   </button>`;
 }
 
@@ -349,6 +467,7 @@ function renderLivePreview(item) {
       </div>
     </div>
     <div class="live-channel-title"><span class="live-badge">AO VIVO</span><div><strong data-live-preview-name>${escapeHtml(item?.name || "Selecione um canal")}</strong><small>${escapeHtml(item?.group || "TV ao vivo")}</small></div></div>
+    <button class="favorite-button focusable" data-action="toggle-live-favorite" data-focusable ${item ? "" : "disabled"}>${isFavorite(item, "live") ? "★ Remover dos favoritos" : "☆ Favoritar canal"}</button>
     <div class="epg-card now"><small>AGORA</small><strong data-epg-now-title>${escapeHtml(epg?.current?.title || "Programação não informada")}</strong><time data-epg-now-time>Agora</time><p data-epg-now-description>${escapeHtml(epg?.current?.description || "Escolha um canal para visualizar a programação e iniciar a prévia.")}</p></div>
     <div class="epg-card next"><small>A SEGUIR</small><strong data-epg-next-title>${escapeHtml(epg?.next?.title || "Próximo programa não informado")}</strong><time data-epg-next-time>Depois</time></div>
   </aside>`;
@@ -456,6 +575,7 @@ function loadCatalogData(kind) {
       state.counts[kind] = payload.total;
       state.loadedCatalogs.add(kind);
       state.catalogErrors.delete(kind);
+      saveDeviceSnapshot();
       return state[kind];
     })
     .catch((error) => {
@@ -563,6 +683,24 @@ function renderDetailsContent(item, kind) {
   detailsPoster.alt = item.logo ? `Capa de ${item.name || "conteúdo"}` : "";
   detailsBackdrop.style.backgroundImage = item.logo ? `url(${JSON.stringify(item.logo)})` : "none";
   detailsPrimary.textContent = isSeries ? "Assistir episódio 1" : "Assistir agora";
+  detailsFavorite.textContent = isFavorite(item, kind) ? "★ Remover favorito" : "☆ Favoritar";
+}
+
+function syncFavoriteUi() {
+  if (state.detailsItem && !detailsModal.classList.contains("hidden")) {
+    detailsFavorite.textContent = isFavorite(state.detailsItem, state.detailsKind) ? "★ Remover favorito" : "☆ Favoritar";
+  }
+  const liveButton = main.querySelector("[data-action=toggle-live-favorite]");
+  if (liveButton && state.selectedLive) liveButton.textContent = isFavorite(state.selectedLive, "live") ? "★ Remover dos favoritos" : "☆ Favoritar canal";
+  main.querySelectorAll(".media-card[data-item-kind]").forEach((card) => {
+    const kind = card.dataset.itemKind;
+    const item = currentItems(kind).find((entry) => String(entry.id || entry.seriesId || "") === String(card.dataset.itemId || card.dataset.seriesId || ""));
+    const active = isFavorite(item, kind);
+    card.classList.toggle("is-favorite", active);
+    let mark = card.querySelector(".favorite-mark");
+    if (active && !mark) card.insertAdjacentHTML("afterbegin", '<span class="favorite-mark" aria-label="Favorito">★</span>');
+    if (!active) mark?.remove();
+  });
 }
 
 async function enrichDetails(item, kind) {
@@ -717,10 +855,266 @@ function adaptiveHlsOptions(preview = false) {
     abrBandWidthFactor: .82,
     abrBandWidthUpFactor: .65,
     abrEwmaDefaultEstimate: 3_500_000,
+    liveSyncDurationCount: preview ? 2 : 3,
+    liveMaxLatencyDurationCount: preview ? 6 : 10,
+    maxLiveSyncPlaybackRate: 1.08,
     manifestLoadingTimeOut: 30_000,
     levelLoadingTimeOut: 30_000,
     fragLoadingTimeOut: 35_000
   };
+}
+
+function absoluteStreamUrl(value) {
+  try { return new URL(String(value || ""), location.href).href; }
+  catch { return String(value || ""); }
+}
+
+function directStreamUrl(value) {
+  try {
+    const url = new URL(String(value || ""), location.href);
+    if (url.origin === location.origin && /^\/api\/stream\//.test(url.pathname)) url.searchParams.set("direct", "1");
+    return url.href;
+  } catch { return String(value || ""); }
+}
+
+function streamCandidates(item) {
+  const candidates = [];
+  const add = (url, type, direct) => {
+    if (!url) return;
+    const resolved = direct ? directStreamUrl(url) : absoluteStreamUrl(url);
+    if (!resolved || candidates.some((candidate) => candidate.url === resolved)) return;
+    candidates.push({ url: resolved, type: type || "auto", direct });
+  };
+  add(item?.playUrl, item?.streamType, true);
+  add(item?.playUrl, item?.streamType, false);
+  add(item?.fallbackPlayUrl, item?.fallbackStreamType, true);
+  add(item?.fallbackPlayUrl, item?.fallbackStreamType, false);
+  return candidates;
+}
+
+function nativePlayerAvailable() {
+  try { return Boolean(window.GateNativePlayer && typeof window.GateNativePlayer.playFullscreen === "function"); }
+  catch { return false; }
+}
+
+window.GateNativeHooks = {
+  onEngine(engine) {
+    document.documentElement.dataset.nativeEngine = String(engine || "").toLowerCase();
+  },
+  onError(message) {
+    showToast(message || "O canal não respondeu em nenhum dos motores.", 6500);
+  },
+  onClosed() {
+    document.documentElement.dataset.nativeEngine = "";
+    state.lastFocused?.focus?.();
+  }
+};
+
+function nativeStreamPair(item) {
+  const candidates = streamCandidates(item);
+  const primary = candidates.find((candidate) => candidate.direct) || candidates[0];
+  const fallback = candidates.find((candidate) => candidate.direct && candidate.url !== primary?.url && candidate.type !== primary?.type)
+    || candidates.find((candidate) => candidate.url !== primary?.url);
+  return { primary, fallback };
+}
+
+function playNativePreview(item) {
+  if (!nativePlayerAvailable()) return false;
+  const stage = main.querySelector(".live-preview-stage");
+  if (!stage) return false;
+  const rect = stage.getBoundingClientRect();
+  const scale = Number(devicePixelRatio || 1);
+  const { primary, fallback } = nativeStreamPair(item);
+  if (!primary?.url) return false;
+  try {
+    window.GateNativePlayer.preview(
+      primary.url,
+      fallback?.url || "",
+      item.name || "Canal",
+      primary.type || "auto",
+      Math.max(0, Math.round(rect.left * scale)),
+      Math.max(0, Math.round(rect.top * scale)),
+      Math.max(1, Math.round(rect.width * scale)),
+      Math.max(1, Math.round(rect.height * scale))
+    );
+    return true;
+  } catch { return false; }
+}
+
+function syncNativePreviewBounds() {
+  if (!nativePlayerAvailable() || !state.selectedLive || state.view !== "live") return;
+  const stage = main.querySelector(".live-preview-stage");
+  if (!stage) return;
+  const rect = stage.getBoundingClientRect();
+  const scale = Number(devicePixelRatio || 1);
+  try {
+    window.GateNativePlayer.resizePreview(
+      Math.max(0, Math.round(rect.left * scale)),
+      Math.max(0, Math.round(rect.top * scale)),
+      Math.max(1, Math.round(rect.width * scale)),
+      Math.max(1, Math.round(rect.height * scale))
+    );
+  } catch {}
+}
+
+function clearWebEngine(session) {
+  if (!session) return;
+  if (session.hls) { session.hls.destroy(); session.hls = null; }
+  if (session.mpegts) {
+    try { session.mpegts.pause(); session.mpegts.unload(); session.mpegts.detachMediaElement(); session.mpegts.destroy(); } catch {}
+    session.mpegts = null;
+  }
+  session.media.pause();
+  session.media.removeAttribute("src");
+  session.media.load();
+}
+
+function destroyWebPlayback(slot, clearMedia = true) {
+  const session = state[slot];
+  if (!session) return;
+  clearInterval(session.watchdog);
+  session.destroyed = true;
+  if (clearMedia) clearWebEngine(session);
+  for (const [name, handler] of session.listeners || []) session.media.removeEventListener(name, handler);
+  state[slot] = null;
+  if (slot === "webPlayer") state.hls = null;
+  if (slot === "webPreview") state.previewHls = null;
+}
+
+function playbackStatus(session, message, type = "loading") {
+  if (!session.preview) showPlayerStatus(message, type);
+}
+
+function advanceWebCandidate(session, message) {
+  if (!session || session.destroyed || session.switching) return;
+  session.switching = true;
+  clearWebEngine(session);
+  session.index += 1;
+  session.networkRetries = 0;
+  session.mediaRetries = 0;
+  setTimeout(() => {
+    session.switching = false;
+    startWebCandidate(session, message);
+  }, session.preview ? 180 : 320);
+}
+
+function startWebCandidate(session, reason = "") {
+  if (!session || session.destroyed) return;
+  const candidate = session.candidates[session.index];
+  if (!candidate) {
+    playbackStatus(session, reason || "Nenhuma rota compatível conseguiu abrir este conteúdo.", "error");
+    if (session.preview) main.querySelector(".preview-placeholder")?.classList.add("visible");
+    return;
+  }
+  session.lastProgressAt = Date.now();
+  session.lastTime = -1;
+  session.started = false;
+  playbackStatus(session, candidate.direct ? "Testando rota direta mais rápida…" : "Abrindo pela rota compatível…");
+
+  if (candidate.type === "hls" && window.Hls?.isSupported()) {
+    const hls = new window.Hls(adaptiveHlsOptions(session.preview));
+    session.hls = hls;
+    if (session.preview) state.previewHls = hls; else state.hls = hls;
+    hls.on(window.Hls.Events.MANIFEST_PARSED, () => {
+      if (session.destroyed) return;
+      session.media.play().catch(() => playbackStatus(session, "Pressione OK ou Play para iniciar.", "ready"));
+    });
+    hls.on(window.Hls.Events.LEVEL_SWITCHED, (_event, data) => {
+      if (!session.preview) updatePlayerQuality(hls.levels?.[data.level]?.height || session.media.videoHeight);
+    });
+    hls.on(window.Hls.Events.ERROR, (_event, data) => {
+      if (!data.fatal || session.destroyed) return;
+      if (!candidate.direct && data.type === window.Hls.ErrorTypes.NETWORK_ERROR && session.networkRetries < 2) {
+        session.networkRetries += 1;
+        playbackStatus(session, "Reconectando sem trocar de rota…");
+        setTimeout(() => hls.startLoad(), 700 * session.networkRetries);
+        return;
+      }
+      if (data.type === window.Hls.ErrorTypes.MEDIA_ERROR && session.mediaRetries < 1) {
+        session.mediaRetries += 1;
+        hls.recoverMediaError();
+        return;
+      }
+      advanceWebCandidate(session, hlsErrorMessage(data));
+    });
+    hls.loadSource(candidate.url);
+    hls.attachMedia(session.media);
+    return;
+  }
+
+  if (candidate.type === "mpegts" && window.mpegts?.isSupported?.()) {
+    try {
+      const player = window.mpegts.createPlayer({ type: "mpegts", isLive: true, url: candidate.url }, {
+        enableWorker: true,
+        enableStashBuffer: true,
+        stashInitialSize: session.preview ? 256 * 1024 : 512 * 1024,
+        lazyLoad: false,
+        autoCleanupSourceBuffer: true,
+        autoCleanupMaxBackwardDuration: 30,
+        autoCleanupMinBackwardDuration: 10,
+        liveBufferLatencyChasing: true,
+        liveBufferLatencyMaxLatency: 5,
+        liveBufferLatencyMinRemain: 1.2
+      });
+      session.mpegts = player;
+      player.attachMediaElement(session.media);
+      player.load();
+      player.on(window.mpegts.Events.ERROR, () => advanceWebCandidate(session, "O fluxo TS não respondeu nesta rota."));
+      Promise.resolve(player.play()).catch(() => playbackStatus(session, "Pressione OK ou Play para iniciar.", "ready"));
+      return;
+    } catch {
+      advanceWebCandidate(session, "Este navegador não conseguiu preparar o fluxo MPEG-TS.");
+      return;
+    }
+  }
+
+  session.media.src = candidate.url;
+  session.media.play().catch(() => playbackStatus(session, "Pressione OK ou Play para iniciar.", "ready"));
+}
+
+function startWebPlayback(media, item, { preview = false } = {}) {
+  const slot = preview ? "webPreview" : "webPlayer";
+  destroyWebPlayback(slot);
+  const candidates = streamCandidates(item);
+  const session = {
+    media,
+    item,
+    preview,
+    candidates,
+    index: 0,
+    hls: null,
+    mpegts: null,
+    listeners: [],
+    destroyed: false,
+    switching: false,
+    lastProgressAt: Date.now(),
+    lastTime: -1,
+    started: false,
+    networkRetries: 0,
+    mediaRetries: 0
+  };
+  const listen = (name, handler) => { media.addEventListener(name, handler); session.listeners.push([name, handler]); };
+  listen("playing", () => {
+    session.started = true;
+    session.lastProgressAt = Date.now();
+    if (!preview) hidePlayerStatus();
+  });
+  listen("timeupdate", () => {
+    if (Math.abs(media.currentTime - session.lastTime) < .08) return;
+    session.lastTime = media.currentTime;
+    session.lastProgressAt = Date.now();
+  });
+  listen("waiting", () => playbackStatus(session, "Sinal oscilando. Ajustando a rota…"));
+  listen("stalled", () => playbackStatus(session, "Sinal parado. Reconectando…"));
+  listen("error", () => advanceWebCandidate(session, "Este formato não abriu nesta rota."));
+  session.watchdog = setInterval(() => {
+    if (session.destroyed || session.switching || media.paused || document.hidden) return;
+    const limit = preview ? 10_000 : 12_000;
+    if (Date.now() - session.lastProgressAt > limit) advanceWebCandidate(session, "O canal congelou e todas as rotas foram testadas.");
+  }, 2500);
+  state[slot] = session;
+  startWebCandidate(session);
+  return session;
 }
 
 function qualityLabel(height) {
@@ -770,6 +1164,14 @@ function preparePlayerShell(item, { immersive = false, preserveFocus = false, st
 async function playStream(itemOrUrl, name = "Reproduzindo", streamType = "auto", options = {}) {
   const item = typeof itemOrUrl === "string" ? { playUrl: itemOrUrl, name, streamType } : itemOrUrl;
   if (!item?.playUrl) return;
+  if (nativePlayerAvailable()) {
+    state.currentItem = item;
+    const { primary, fallback } = nativeStreamPair(item);
+    try {
+      window.GateNativePlayer.playFullscreen(primary.url, fallback?.url || "", item.name || name, primary.type || streamType || "auto");
+      return;
+    } catch {}
+  }
   if (!options.reusePlayer) preparePlayerShell(item, options);
   else {
     state.currentItem = item;
@@ -777,57 +1179,11 @@ async function playStream(itemOrUrl, name = "Reproduzindo", streamType = "auto",
     updatePlayerQuality(0);
     showPlayerStatus("Abrindo o vídeo…");
   }
-  if (state.hls) { state.hls.destroy(); state.hls = null; }
-  video.pause();
-  video.removeAttribute("src");
-  video.load();
-
-  const type = item.streamType || streamType;
-  if (type === "mpegts") {
-    showPlayerStatus("Este canal usa MPEG-TS direto. Tentando reprodução nativa…");
-    video.src = item.playUrl;
-    video.play().catch(() => {});
-    return;
-  }
-  if (type === "hls" && window.Hls?.isSupported()) {
-    const hls = new window.Hls(adaptiveHlsOptions());
-    state.hls = hls;
-    let networkRetries = 0;
-    let mediaRetries = 0;
-    hls.on(window.Hls.Events.MANIFEST_PARSED, () => {
-      showPlayerStatus("Sinal encontrado. Iniciando reprodução…");
-      video.play().catch(() => showPlayerStatus("Pressione OK ou Play para iniciar.", "ready"));
-    });
-    hls.on(window.Hls.Events.LEVEL_SWITCHED, (_event, data) => {
-      updatePlayerQuality(hls.levels?.[data.level]?.height || video.videoHeight);
-    });
-    hls.on(window.Hls.Events.ERROR, (_event, data) => {
-      if (!data.fatal) return;
-      if (data.type === window.Hls.ErrorTypes.NETWORK_ERROR && networkRetries < 3) {
-        networkRetries += 1;
-        showPlayerStatus("Reconectando ao canal…");
-        setTimeout(() => hls.startLoad(), 1200 * networkRetries);
-      } else if (data.type === window.Hls.ErrorTypes.MEDIA_ERROR && mediaRetries < 2) {
-        mediaRetries += 1;
-        showPlayerStatus("Ajustando o formato do vídeo…");
-        hls.recoverMediaError();
-      } else {
-        showPlayerStatus(hlsErrorMessage(data), "error");
-      }
-    });
-    hls.loadSource(item.playUrl);
-    hls.attachMedia(video);
-  } else {
-    video.src = item.playUrl;
-    video.play().catch(() => showPlayerStatus("Pressione OK ou Play para iniciar.", "ready"));
-  }
+  startWebPlayback(video, { ...item, streamType: item.streamType || streamType }, { preview: false });
 }
 
 function closePlayer() {
-  video.pause();
-  video.removeAttribute("src");
-  video.load();
-  if (state.hls) { state.hls.destroy(); state.hls = null; }
+  destroyWebPlayback("webPlayer");
   playerModal.classList.add("hidden");
   playerModal.classList.remove("player-modal-immersive");
   hidePlayerStatus();
@@ -839,12 +1195,9 @@ function closePlayer() {
 }
 
 function stopLivePreview() {
-  if (state.previewHls) { state.previewHls.destroy(); state.previewHls = null; }
-  const preview = document.querySelector("#live-preview-video");
-  if (preview) {
-    preview.pause();
-    preview.removeAttribute("src");
-    preview.load();
+  destroyWebPlayback("webPreview");
+  if (nativePlayerAvailable()) {
+    try { window.GateNativePlayer.close(); } catch {}
   }
 }
 
@@ -860,19 +1213,8 @@ function playLivePreview(item) {
   if (title) title.textContent = item.name || "Canal";
   if (group) group.textContent = item.group || "TV ao vivo";
   placeholder?.classList.remove("visible");
-  if (state.previewHls) { state.previewHls.destroy(); state.previewHls = null; }
-  preview.pause();
-  preview.removeAttribute("src");
-  preview.load();
-  if (item.streamType === "hls" && window.Hls?.isSupported()) {
-    state.previewHls = new window.Hls(adaptiveHlsOptions(true));
-    state.previewHls.loadSource(item.playUrl);
-    state.previewHls.attachMedia(preview);
-    state.previewHls.on(window.Hls.Events.MANIFEST_PARSED, () => preview.play().catch(() => {}));
-  } else {
-    preview.src = item.playUrl;
-    preview.play().catch(() => {});
-  }
+  destroyWebPlayback("webPreview");
+  if (!playNativePreview(item)) startWebPlayback(preview, item, { preview: true });
   updateLivePreviewEpg();
   const row = [...main.querySelectorAll("[data-live-select]")].find((node) => node.dataset.liveSelect === String(item.id));
   queueEpgForCards(row ? [row] : []);
@@ -882,6 +1224,9 @@ function openLiveFullscreen() {
   const preview = main.querySelector("#live-preview-video");
   const stage = main.querySelector(".live-preview-stage");
   if (!preview || !state.selectedLive) return showToast("Escolha um canal primeiro.");
+  if (nativePlayerAvailable()) {
+    try { window.GateNativePlayer.fullscreen(); return; } catch {}
+  }
   const request = stage?.requestFullscreen || stage?.webkitRequestFullscreen || preview.webkitEnterFullscreen;
   if (request) {
     try { request.call(stage?.requestFullscreen || stage?.webkitRequestFullscreen ? stage : preview); preview.play().catch(() => {}); return; } catch {}
@@ -903,14 +1248,74 @@ async function openSeries(item) {
   }
 }
 
-function afterConnected(payload) {
+function deviceSnapshot() {
+  return {
+    version: APP_VERSION,
+    savedAt: new Date().toISOString(),
+    descriptor: state.connectionDescriptor,
+    source: state.source,
+    account: state.account,
+    sessionId: state.sessionId,
+    counts: state.counts,
+    channels: state.channels,
+    movies: state.movies,
+    series: state.series
+  };
+}
+
+function saveDeviceSnapshot() {
+  if (!state.source) return Promise.resolve();
+  return cacheWrite("session", deviceSnapshot());
+}
+
+async function restoreDeviceSnapshot() {
+  const cached = await cacheRead("session");
+  if (!cached?.source || !Array.isArray(cached.channels)) return false;
+  state.source = cached.source;
+  state.account = cached.account || null;
+  state.sessionId = cached.sessionId || null;
+  state.counts = cached.counts || {};
+  state.channels = cached.channels || [];
+  state.movies = cached.movies || [];
+  state.series = cached.series || [];
+  state.connectionDescriptor = cached.descriptor || null;
+  state.loadedCatalogs = new Set([
+    ...(state.movies.length ? ["movies"] : []),
+    ...(state.series.length ? ["series"] : [])
+  ]);
+  if (location.pathname === "/") renderHome(); else route();
+  return true;
+}
+
+async function reconnectSavedSource() {
+  const descriptor = state.connectionDescriptor;
+  if (!descriptor?.type) return;
+  try {
+    let payload;
+    if (descriptor.type === "xtream") {
+      payload = await api("/api/xtream/connect", { method: "POST", body: JSON.stringify({ serverUrl: descriptor.serverUrl, username: descriptor.username, password: descriptor.password }) });
+    } else if (descriptor.type === "m3u-url") {
+      payload = await api("/api/m3u/parse", { method: "POST", body: JSON.stringify({ url: descriptor.url }) });
+    } else if (descriptor.type === "m3u-file" && Array.isArray(descriptor.items)) {
+      const prepared = await api("/api/streams/register", { method: "POST", body: JSON.stringify({ items: descriptor.items }) });
+      payload = { source: "m3u-file", channels: prepared.items, counts: { live: prepared.items.length } };
+    }
+    if (payload) afterConnected(payload, descriptor, { silent: true, preserveCatalogs: true });
+  } catch {
+    showToast("A lista salva foi mantida. A atualização automática será tentada novamente na próxima abertura.", 5200);
+  }
+}
+
+function afterConnected(payload, descriptor = state.connectionDescriptor, options = {}) {
+  const previousMovies = state.movies;
+  const previousSeries = state.series;
   state.source = payload.source;
   state.account = payload.account || null;
   state.sessionId = payload.sessionId || null;
   state.counts = payload.counts || { live: payload.channels?.length || 0, movies: payload.movies?.length || 0, series: payload.series?.length || 0 };
   state.channels = payload.channels || [];
-  state.movies = payload.movies || [];
-  state.series = payload.series || [];
+  state.movies = payload.movies?.length ? payload.movies : options.preserveCatalogs ? previousMovies : [];
+  state.series = payload.series?.length ? payload.series : options.preserveCatalogs ? previousSeries : [];
   state.episodes = [];
   state.loadedCatalogs = new Set();
   state.catalogPromises = new Map();
@@ -919,8 +1324,9 @@ function afterConnected(payload) {
   state.epg = new Map();
   state.epgPending = new Set();
   state.selectedLive = null;
-  if (state.movies.length) state.loadedCatalogs.add("movies");
-  if (state.series.length) state.loadedCatalogs.add("series");
+  state.connectionDescriptor = descriptor || null;
+  if (payload.movies?.length) state.loadedCatalogs.add("movies");
+  if (payload.series?.length) state.loadedCatalogs.add("series");
   localStorage.setItem("gate.lastSource", JSON.stringify({ type: state.source, connectedAt: new Date().toISOString(), counts: state.counts, expiresAt: state.account?.expiresAt || null }));
   closeSource();
   history.replaceState({}, "", "/");
@@ -928,7 +1334,8 @@ function afterConnected(payload) {
   state.visibleCount = state.pageSize;
   renderHome();
   preloadMainCatalogs();
-  showToast(`Lista conectada. Validade: ${formatExpiryDate(state.account?.expiresAt)}.`);
+  saveDeviceSnapshot();
+  if (!options.silent) showToast(`Lista conectada e salva neste aparelho. Validade: ${formatExpiryDate(state.account?.expiresAt)}.`);
 }
 
 function bindForms() {
@@ -937,7 +1344,10 @@ function bindForms() {
     const form = event.currentTarget;
     setSourceStatus("Autenticando e organizando os canais…");
     setFormBusy(form, true, "Carregando canais…");
-    try { afterConnected(await api("/api/xtream/connect", { method: "POST", body: JSON.stringify(normalizeXtreamForm(form)) })); }
+    try {
+      const credentials = normalizeXtreamForm(form);
+      afterConnected(await api("/api/xtream/connect", { method: "POST", body: JSON.stringify(credentials) }), { type: "xtream", ...credentials });
+    }
     catch (error) { setSourceStatus(error.message, "error"); }
     finally { setFormBusy(form, false); }
   });
@@ -955,9 +1365,9 @@ function bindForms() {
         const localItems = parseLocalM3u(await file.text());
         if (!localItems.length) throw new Error("Nenhum canal válido foi encontrado no arquivo.");
         const prepared = await api("/api/streams/register", { method: "POST", body: JSON.stringify({ items: localItems }) });
-        afterConnected({ source: "m3u-file", channels: prepared.items, counts: { live: prepared.items.length } });
+        afterConnected({ source: "m3u-file", channels: prepared.items, counts: { live: prepared.items.length } }, { type: "m3u-file", items: localItems });
       } else {
-        afterConnected(await api("/api/m3u/parse", { method: "POST", body: JSON.stringify({ url }) }));
+        afterConnected(await api("/api/m3u/parse", { method: "POST", body: JSON.stringify({ url }) }), { type: "m3u-url", url });
       }
     } catch (error) { setSourceStatus(error.message, "error"); }
     finally { setFormBusy(form, false); }
@@ -1005,11 +1415,13 @@ function bindRenewForm() {
 
 function bindDynamicActions() {
   main.querySelectorAll("[data-action=open-source]").forEach((button) => button.addEventListener("click", () => openSource(button.dataset.tab || "xtream")));
+  main.querySelector("[data-action=toggle-live-favorite]")?.addEventListener("click", () => state.selectedLive && toggleFavorite(state.selectedLive, "live"));
   main.querySelectorAll("[data-live-select]:not([data-action-bound])").forEach((button) => {
     button.dataset.actionBound = "true";
     button.addEventListener("click", () => {
       const item = state.channels.find((channel) => String(channel.id) === button.dataset.liveSelect);
       if (!item) return;
+      if (!allowActivation(`live:${item.id}`)) return;
       if (String(state.selectedLive?.id || "") === String(item.id || "")) openLiveFullscreen();
       else playLivePreview(item);
     });
@@ -1030,7 +1442,14 @@ function bindDynamicActions() {
         description: button.dataset.description,
         streamType: button.dataset.streamType || "auto"
       };
-      if (kind === "movies" || kind === "series") openDetails(item, kind);
+      if (!allowActivation(`${kind}:${item.id || item.seriesId || item.name}`)) return;
+      if (kind === "live") {
+        state.filter = { query: "", group: "Todos" };
+        state.visibleCount = Math.max(60, state.pageSize);
+        state.selectedLive = item;
+        renderLiveCatalog();
+        setTimeout(() => playLivePreview(item), 0);
+      } else if (kind === "movies" || kind === "series") openDetails(item, kind);
       else if (item.seriesId) openDetails(item, "series");
       else if (item.playUrl) playStream(item);
     });
@@ -1047,6 +1466,7 @@ function setupTvEnvironment() {
   document.body.classList.toggle("tv-optimized", tv);
   document.body.classList.toggle("browser-mode", !tv);
   document.body.classList.toggle("android-wrapper", androidWrapper);
+  document.body.classList.toggle("native-player", nativePlayerAvailable());
   document.body.classList.toggle("touch-mode", Boolean(touch));
   document.documentElement.dataset.platform = tv ? "tv" : androidWrapper ? "android-app" : "browser";
   if (window.tizen?.tvinputdevice) {
@@ -1091,6 +1511,23 @@ function moveFocus(direction) {
   candidates[0]?.element.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
 }
 
+function toggleFocusedFavorite() {
+  if (!detailsModal.classList.contains("hidden") && state.detailsItem) return toggleFavorite(state.detailsItem, state.detailsKind);
+  const active = document.activeElement;
+  if (active?.dataset?.liveSelect) {
+    const item = state.channels.find((channel) => String(channel.id) === String(active.dataset.liveSelect));
+    if (item) return toggleFavorite(item, "live");
+  }
+  const card = active?.closest?.(".media-card[data-item-kind]");
+  if (card) {
+    const kind = card.dataset.itemKind;
+    const item = currentItems(kind).find((entry) => String(entry.id || entry.seriesId || "") === String(card.dataset.itemId || card.dataset.seriesId || ""));
+    if (item) return toggleFavorite(item, kind);
+  }
+  if (state.selectedLive) return toggleFavorite(state.selectedLive, "live");
+  return false;
+}
+
 function showAd() {
   if (state.adFree || sessionStorage.getItem("gate.adShown")) return;
   const overlay = document.querySelector("#ad-overlay");
@@ -1112,7 +1549,6 @@ video.addEventListener("canplay", () => { if (!video.paused) hidePlayerStatus();
 video.addEventListener("loadedmetadata", () => updatePlayerQuality(video.videoHeight));
 video.addEventListener("waiting", () => showPlayerStatus("Carregando o sinal…"));
 video.addEventListener("stalled", () => showPlayerStatus("Sinal instável. Reconectando…"));
-video.addEventListener("error", () => showPlayerStatus(video.error?.code === 4 && state.currentItem?.streamType === "mpegts" ? "Esta TV não reproduz MPEG-TS direto. Use a saída M3U8/Xtream do mesmo servidor." : "Não foi possível reproduzir este canal.", "error"));
 video.addEventListener("click", () => { if (!playerModal.classList.contains("hidden")) video.paused ? video.play().catch(() => {}) : video.pause(); });
 retryButton.addEventListener("click", () => state.currentItem && playStream(state.currentItem));
 
@@ -1124,6 +1560,7 @@ document.addEventListener("click", (event) => {
   if (action === "open-live") state.channels.length ? ensureCatalog("live") : openSource("xtream");
   if (action === "open-movies") state.source ? ensureCatalog("movies") : openSource("xtream");
   if (action === "open-series") state.source ? ensureCatalog("series") : openSource("xtream");
+  if (action === "open-favorites") state.source ? renderFavorites() : openSource("xtream");
   if (action === "go-home") renderHome();
   if (action === "live-fullscreen") openLiveFullscreen();
   if (action === "toggle-adfree") navigate("/renovar");
@@ -1134,6 +1571,7 @@ document.querySelector(".player-close").addEventListener("click", closePlayer);
 document.querySelector("#details-close").addEventListener("click", () => closeDetails());
 document.querySelector("#details-cancel").addEventListener("click", () => closeDetails());
 detailsPrimary.addEventListener("click", confirmDetails);
+detailsFavorite.addEventListener("click", () => state.detailsItem && toggleFavorite(state.detailsItem, state.detailsKind));
 detailsPoster.addEventListener("error", () => {
   detailsPoster.classList.add("fallback");
   detailsPoster.src = "/gate-icon.svg";
@@ -1144,6 +1582,7 @@ document.addEventListener("keydown", (event) => {
   const code = Number(event.keyCode || event.which || 0);
   const backPressed = [4, 27, 461, 10009].includes(code) || event.key === "Escape" || event.key === "BrowserBack";
   const playPausePressed = [13, 19, 415, 10252].includes(code) || event.key === "Enter" || event.key === " ";
+  const favoritePressed = [184, 404].includes(code) || event.key?.toLowerCase?.() === "f";
   const playerOpen = !playerModal.classList.contains("hidden");
   if (playerOpen) {
     if (backPressed || event.key === "Backspace") { event.preventDefault(); closePlayer(); return; }
@@ -1157,6 +1596,7 @@ document.addEventListener("keydown", (event) => {
     closeDetails();
     return;
   }
+  if (favoritePressed) { event.preventDefault(); toggleFocusedFavorite(); return; }
   const editable = event.target?.matches?.("input, textarea, select, [contenteditable='true']");
   if (editable) {
     if (document.body.classList.contains("tv-optimized") && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
@@ -1186,15 +1626,21 @@ document.addEventListener("focusin", (event) => {
   if (sentinel) appendNextCatalogPage(sentinel.dataset.kind, sentinel.dataset.heading || "");
 });
 window.addEventListener("scroll", () => {
+  syncNativePreviewBounds();
   const sentinel = main.querySelector("[data-auto-load]");
   if (!sentinel || sentinel.getBoundingClientRect().top > innerHeight + 520) return;
   appendNextCatalogPage(sentinel.dataset.kind, sentinel.dataset.heading || "");
 }, { passive: true });
+window.addEventListener("resize", () => requestAnimationFrame(syncNativePreviewBounds));
 
 async function boot() {
   setupTvEnvironment();
   try { state.config = await api("/api/config"); } catch {}
-  bindForms(); route(); showAd();
+  bindForms();
+  const restored = await restoreDeviceSnapshot();
+  if (!restored) route();
+  showAd();
+  if (restored) reconnectSavedSource();
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
 }
 boot();

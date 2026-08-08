@@ -4,5 +4,8 @@
         <item name="android:colorAccent">#1877F2</item>
         <item name="android:windowActionModeOverlay">true</item>
         <item name="android:windowFullscreen">true</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowBackground">#050E1D</item>
+        <item name="android:windowDisablePreview">true</item>
     </style>
 </resources>

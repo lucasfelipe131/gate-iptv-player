@@ -110,9 +110,11 @@ test("carrega logos, capas, EPG e paginação automática no layout de TV", asyn
   form.elements.password.value = "";
   form.dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }));
 
-  await waitFor(() => window.document.querySelectorAll(".library-launch").length === 3);
+  await waitFor(() => window.document.querySelectorAll(".library-launch").length === 4);
   assert.deepEqual(xtreamConnectBody, { serverUrl: "http://provider.test:8080", username: "teste", password: "segredo" });
   assert.match(window.document.querySelector(".account-expiry strong").textContent, /2026/);
+  await waitFor(() => Boolean(window.localStorage.getItem("gate.cache.session")));
+  assert.equal(JSON.parse(window.localStorage.getItem("gate.cache.session")).descriptor.type, "xtream");
 
   await waitFor(() => /2 filmes/.test(window.document.querySelector(".movies-launch small")?.textContent || ""));
   window.document.querySelector(".movies-launch").click();
@@ -125,6 +127,8 @@ test("carrega logos, capas, EPG e paginação automática no layout de TV", asyn
   assert.equal(window.document.querySelector("#details-modal").classList.contains("hidden"), false);
   assert.equal(window.document.querySelector("#player-modal").classList.contains("hidden"), true);
   assert.equal(window.document.querySelector("#details-primary").textContent, "Assistir agora");
+  window.document.querySelector("#details-favorite").click();
+  assert.deepEqual(JSON.parse(window.localStorage.getItem("gate.favorites.v1")), ["movies:101"]);
   window.document.querySelector("#details-primary").click();
   assert.equal(window.document.querySelector("#details-modal").classList.contains("hidden"), true);
   assert.equal(window.document.querySelector("#player-modal").classList.contains("hidden"), false);
@@ -151,6 +155,7 @@ test("carrega logos, capas, EPG e paginação automática no layout de TV", asyn
   await waitFor(() => /Programa atual 1/.test(window.document.querySelector("[data-epg-now-title]")?.textContent || ""));
   assert.match(window.document.querySelector("[data-epg-next-title]").textContent, /Próximo programa 1/);
   assert.equal(window.document.querySelectorAll(".fullscreen-button").length, 0);
+  await new Promise((resolve) => setTimeout(resolve, 450));
   firstChannel.click();
   assert.equal(window.document.querySelector("#player-modal").classList.contains("hidden"), false);
   window.document.querySelector(".player-close").click();
@@ -159,6 +164,11 @@ test("carrega logos, capas, EPG e paginação automática no layout de TV", asyn
   firstPage.at(-1).focus();
   await waitFor(() => window.document.querySelectorAll(".live-channel-row").length === 90);
   assert.equal(window.document.querySelectorAll("[data-auto-load]").length, 0);
+  window.document.querySelector("[data-action='go-home']").click();
+  assert.match(window.document.querySelector(".favorites-launch small").textContent, /1 item salvo/);
+  window.document.querySelector(".favorites-launch").click();
+  assert.equal(window.document.querySelectorAll(".media-card.is-favorite").length, 1);
+  assert.equal(window.document.querySelector(".media-card.is-favorite strong").textContent, "Filme Um");
   dom.window.close();
 });
 
@@ -182,5 +192,67 @@ test("adapta o mesmo núcleo para navegador e invólucro Android comum", async (
   assert.equal(window.document.body.classList.contains("android-wrapper"), true);
   assert.equal(window.document.body.classList.contains("tv-optimized"), false);
   assert.equal(window.document.documentElement.dataset.platform, "android-app");
+  dom.window.close();
+});
+
+test("usa a ponte nativa no APK sem abrir uma segunda conexão no WebView", async () => {
+  const dom = new JSDOM(html, {
+    url: "https://gate.test/?platform=androidtv",
+    runScripts: "outside-only",
+    pretendToBeVisual: true
+  });
+  const { window } = dom;
+  window.sessionStorage.setItem("gate.adShown", "true");
+  window.HTMLElement.prototype.scrollIntoView = () => {};
+  window.HTMLMediaElement.prototype.play = async () => {};
+  window.HTMLMediaElement.prototype.pause = () => {};
+  window.HTMLMediaElement.prototype.load = () => {};
+  Object.defineProperty(window.HTMLElement.prototype, "offsetParent", {
+    configurable: true,
+    get() { return this.parentNode ? window.document.body : null; }
+  });
+
+  const nativeCalls = { preview: [], fullscreen: 0, close: 0 };
+  window.GateNativePlayer = {
+    preview(...args) { nativeCalls.preview.push(args); },
+    playFullscreen() {},
+    fullscreen() { nativeCalls.fullscreen += 1; },
+    resizePreview() {},
+    close() { nativeCalls.close += 1; }
+  };
+  window.fetch = async (input, options = {}) => {
+    const pathname = new URL(String(input), window.location.href).pathname;
+    if (pathname === "/api/config") return reply({ annualPrice: 30, adDurationSeconds: 10 });
+    if (pathname === "/api/xtream/connect") return reply({
+      source: "xtream",
+      sessionId: "native-session",
+      counts: { live: 1, movies: 0, series: 0 },
+      channels: [{ id: "7", name: "Canal Nativo", group: "Teste", playUrl: "/api/stream/token", fallbackPlayUrl: "/api/stream/token-ts", streamType: "hls", fallbackStreamType: "mpegts" }]
+    });
+    if (pathname === "/api/xtream/epg") return reply({ items: { 7: {} } });
+    if (pathname === "/api/xtream/catalog") return reply({ total: 0, items: [] });
+    return reply({ error: "Rota de teste não preparada" }, false);
+  };
+
+  window.eval(appScript);
+  await waitFor(() => window.document.querySelector(".hero"));
+  assert.equal(window.document.body.classList.contains("native-player"), true);
+  const form = window.document.querySelector("#xtream-form");
+  form.elements.serverUrl.value = "provider.test";
+  form.elements.username.value = "user";
+  form.elements.password.value = "pass";
+  form.dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }));
+  await waitFor(() => window.document.querySelector(".live-launch"));
+  window.document.querySelector(".live-launch").click();
+  await waitFor(() => window.document.querySelector(".live-channel-row"));
+  const channel = window.document.querySelector(".live-channel-row");
+  channel.click();
+  await waitFor(() => nativeCalls.preview.length === 1);
+  assert.match(nativeCalls.preview[0][0], /\/api\/stream\/token\?direct=1$/);
+  assert.match(nativeCalls.preview[0][1], /\/api\/stream\/token-ts\?direct=1$/);
+  assert.equal(window.document.querySelector("#live-preview-video").getAttribute("src"), null);
+  await new Promise((resolve) => setTimeout(resolve, 450));
+  channel.click();
+  assert.equal(nativeCalls.fullscreen, 1);
   dom.window.close();
 });
