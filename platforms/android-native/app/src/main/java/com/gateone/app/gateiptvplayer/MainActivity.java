@@ -57,8 +57,10 @@ import java.util.List;
 @OptIn(markerClass = UnstableApi.class)
 public final class MainActivity extends Activity {
     private static final String HOME = "https://gate-iptv-player-production.up.railway.app/";
-    private static final String USER_AGENT = "GATE-TV-NATIVE/0.5.0";
-    private static final long STALL_TIMEOUT_MS = 12_000L;
+    private static final String USER_AGENT = "GATE-TV-NATIVE/0.5.1";
+    private static final long START_TIMEOUT_MS = 22_000L;
+    private static final long STALL_TIMEOUT_MS = 20_000L;
+    private static final int MAX_RETRY_ROUNDS = 2;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final List<PlaybackAttempt> attempts = new ArrayList<>();
@@ -78,7 +80,10 @@ public final class MainActivity extends Activity {
     private boolean fullscreen;
     private boolean playbackStarted;
     private int attemptIndex;
+    private int retryRound;
     private long lastProgressAt;
+    private long lastExoPosition = -1L;
+    private boolean switchingAttempt;
 
     private static final class PlaybackAttempt {
         final boolean useVlc;
@@ -117,7 +122,7 @@ public final class MainActivity extends Activity {
         settings.setAllowFileAccess(false);
         settings.setAllowContentAccess(false);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
-        settings.setUserAgentString(settings.getUserAgentString() + " GATE-IPTV-PLAYER/0.5.0");
+        settings.setUserAgentString(settings.getUserAgentString() + " GATE-IPTV-PLAYER/0.5.1");
         catalogue.setWebChromeClient(new WebChromeClient());
         catalogue.setWebViewClient(new WebViewClient());
         catalogue.addJavascriptInterface(new PlayerBridge(), "GateNativePlayer");
@@ -223,8 +228,10 @@ public final class MainActivity extends Activity {
             addAttempts(fallbackUrl, "mpegts".equalsIgnoreCase(streamType) ? streamType : "mpegts");
         }
         attemptIndex = 0;
+        retryRound = 0;
         nativePlaying = true;
         playbackStarted = false;
+        switchingAttempt = false;
         lastProgressAt = SystemClock.elapsedRealtime();
         playerLayer.setVisibility(View.VISIBLE);
         startAttempt();
@@ -232,20 +239,36 @@ public final class MainActivity extends Activity {
 
     private void addAttempts(String url, String streamType) {
         if (url == null || !(url.startsWith("http://") || url.startsWith("https://"))) return;
-        attempts.add(new PlaybackAttempt(true, url, streamType, 1200));
-        attempts.add(new PlaybackAttempt(true, url, streamType, 2200));
-        attempts.add(new PlaybackAttempt(false, url, streamType, 0));
+        if ("hls".equalsIgnoreCase(streamType)) {
+            attempts.add(new PlaybackAttempt(false, url, streamType, 0));
+            attempts.add(new PlaybackAttempt(true, url, streamType, 2_500));
+            attempts.add(new PlaybackAttempt(true, url, streamType, 5_000));
+        } else {
+            attempts.add(new PlaybackAttempt(true, url, streamType, 2_500));
+            attempts.add(new PlaybackAttempt(true, url, streamType, 5_000));
+            attempts.add(new PlaybackAttempt(false, url, streamType, 0));
+        }
     }
 
     private void startAttempt() {
         if (!nativePlaying) return;
         if (attemptIndex >= attempts.size()) {
-            showState("O canal não respondeu nos motores VLC e Media3.");
-            notifyWeb("onError", "Não foi possível estabilizar este canal. Tente outro canal ou verifique a origem da lista.");
-            return;
+            if (retryRound < MAX_RETRY_ROUNDS) {
+                retryRound += 1;
+                attemptIndex = 0;
+                showState("Reconectando a fonte…");
+                handler.postDelayed(this::startAttempt, 1_500L * retryRound);
+                return;
+            } else {
+                showState("O canal não respondeu nos motores VLC e Media3.");
+                notifyWeb("onError", "Não foi possível estabilizar este canal. Tente outro canal ou verifique a origem da lista.");
+                return;
+            }
         }
         PlaybackAttempt attempt = attempts.get(attemptIndex);
+        switchingAttempt = false;
         playbackStarted = false;
+        lastExoPosition = -1L;
         lastProgressAt = SystemClock.elapsedRealtime();
         showState(attemptIndex == 0 ? "Conectando…" : "Ajustando motor e rota…");
         if (attempt.useVlc) startVlc(attempt); else startExoPlayer(attempt);
@@ -313,7 +336,7 @@ public final class MainActivity extends Activity {
         DefaultMediaSourceFactory sourceFactory = new DefaultMediaSourceFactory(this, extractorsFactory)
                 .setDataSourceFactory(dataSourceFactory);
         DefaultLoadControl loadControl = new DefaultLoadControl.Builder()
-                .setBufferDurationsMs(2_000, 18_000, 650, 1_200)
+                .setBufferDurationsMs(5_000, 45_000, 1_500, 3_000)
                 .setPrioritizeTimeOverSizeThresholds(true)
                 .build();
 
@@ -360,7 +383,8 @@ public final class MainActivity extends Activity {
     }
 
     private void tryNextAttempt() {
-        if (!nativePlaying) return;
+        if (!nativePlaying || switchingAttempt) return;
+        switchingAttempt = true;
         attemptIndex += 1;
         handler.postDelayed(this::startAttempt, 350);
     }
@@ -368,11 +392,24 @@ public final class MainActivity extends Activity {
     private final Runnable watchdog = new Runnable() {
         @Override
         public void run() {
-            if (nativePlaying && playbackStarted && SystemClock.elapsedRealtime() - lastProgressAt > STALL_TIMEOUT_MS) {
-                tryNextAttempt();
-                lastProgressAt = SystemClock.elapsedRealtime();
-            } else if (nativePlaying && exoPlayer != null && exoPlayer.isPlaying()) {
-                lastProgressAt = SystemClock.elapsedRealtime();
+            if (nativePlaying) {
+                long now = SystemClock.elapsedRealtime();
+                if (!playbackStarted && now - lastProgressAt > START_TIMEOUT_MS) {
+                    tryNextAttempt();
+                    lastProgressAt = now;
+                } else if (playbackStarted && exoPlayer != null && exoPlayer.isPlaying()) {
+                    long position = exoPlayer.getCurrentPosition();
+                    if (lastExoPosition < 0L || position > lastExoPosition + 150L) {
+                        lastExoPosition = position;
+                        lastProgressAt = now;
+                    } else if (now - lastProgressAt > STALL_TIMEOUT_MS) {
+                        tryNextAttempt();
+                        lastProgressAt = now;
+                    }
+                } else if (playbackStarted && now - lastProgressAt > STALL_TIMEOUT_MS) {
+                    tryNextAttempt();
+                    lastProgressAt = now;
+                }
             }
             handler.postDelayed(this, 2_500L);
         }

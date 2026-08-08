@@ -2,7 +2,7 @@
 
 Player híbrido web/PWA e Android TV para navegadores, BlueStacks e Smart TVs. O aplicativo não fornece conteúdo: cada usuário conecta apenas fontes e listas que tenha autorização para utilizar.
 
-## Recursos da versão 0.5.0
+## Recursos da versão 0.5.1
 
 - conexão Xtream Codes e listas M3U/M3U8 por URL ou arquivo local;
 - reconexão automática no mesmo aparelho, com os dados salvos apenas localmente;

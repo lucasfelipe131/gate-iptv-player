@@ -1,4 +1,4 @@
-const APP_VERSION = "0.5.0";
+const APP_VERSION = "0.5.1";
 const CACHE_DB = "gate-player-cache-v1";
 const CACHE_STORE = "device";
 const FAVORITES_KEY = "gate.favorites.v1";
@@ -850,14 +850,14 @@ function adaptiveHlsOptions(preview = false) {
     enableWorker: true,
     lowLatencyMode: false,
     backBufferLength: preview ? 30 : 60,
-    maxBufferLength: preview ? 36 : 72,
-    maxMaxBufferLength: preview ? 72 : 180,
-    abrBandWidthFactor: .82,
-    abrBandWidthUpFactor: .65,
-    abrEwmaDefaultEstimate: 3_500_000,
-    liveSyncDurationCount: preview ? 2 : 3,
-    liveMaxLatencyDurationCount: preview ? 6 : 10,
-    maxLiveSyncPlaybackRate: 1.08,
+    maxBufferLength: preview ? 42 : 90,
+    maxMaxBufferLength: preview ? 90 : 240,
+    abrBandWidthFactor: .75,
+    abrBandWidthUpFactor: .55,
+    abrEwmaDefaultEstimate: 2_500_000,
+    liveSyncDurationCount: preview ? 3 : 5,
+    liveMaxLatencyDurationCount: preview ? 10 : 18,
+    maxLiveSyncPlaybackRate: 1.04,
     manifestLoadingTimeOut: 30_000,
     levelLoadingTimeOut: 30_000,
     fragLoadingTimeOut: 35_000
@@ -992,10 +992,25 @@ function advanceWebCandidate(session, message) {
   session.index += 1;
   session.networkRetries = 0;
   session.mediaRetries = 0;
+  session.stallRetries = 0;
   setTimeout(() => {
     session.switching = false;
     startWebCandidate(session, message);
   }, session.preview ? 180 : 320);
+}
+
+function retryWebCandidate(session, message) {
+  if (!session || session.destroyed || session.switching) return;
+  session.switching = true;
+  clearWebEngine(session);
+  session.networkRetries = 0;
+  session.mediaRetries = 0;
+  session.lastProgressAt = Date.now();
+  playbackStatus(session, message || "Reconectando o canal…");
+  setTimeout(() => {
+    session.switching = false;
+    startWebCandidate(session, message);
+  }, session.preview ? 350 : 700);
 }
 
 function startWebCandidate(session, reason = "") {
@@ -1008,6 +1023,7 @@ function startWebCandidate(session, reason = "") {
   }
   session.lastProgressAt = Date.now();
   session.lastTime = -1;
+  session.lastDecodedFrames = -1;
   session.started = false;
   playbackStatus(session, candidate.direct ? "Testando rota direta mais rápida…" : "Abrindo pela rota compatível…");
 
@@ -1047,19 +1063,28 @@ function startWebCandidate(session, reason = "") {
       const player = window.mpegts.createPlayer({ type: "mpegts", isLive: true, url: candidate.url }, {
         enableWorker: true,
         enableStashBuffer: true,
-        stashInitialSize: session.preview ? 256 * 1024 : 512 * 1024,
+        stashInitialSize: session.preview ? 1024 * 1024 : 3 * 1024 * 1024,
         lazyLoad: false,
         autoCleanupSourceBuffer: true,
-        autoCleanupMaxBackwardDuration: 30,
-        autoCleanupMinBackwardDuration: 10,
-        liveBufferLatencyChasing: true,
-        liveBufferLatencyMaxLatency: 5,
-        liveBufferLatencyMinRemain: 1.2
+        autoCleanupMaxBackwardDuration: 60,
+        autoCleanupMinBackwardDuration: 20,
+        liveBufferLatencyChasing: false,
+        liveBufferLatencyMaxLatency: 15,
+        liveBufferLatencyMinRemain: 3
       });
       session.mpegts = player;
       player.attachMediaElement(session.media);
       player.load();
       player.on(window.mpegts.Events.ERROR, () => advanceWebCandidate(session, "O fluxo TS não respondeu nesta rota."));
+      if (window.mpegts.Events.STATISTICS_INFO) {
+        player.on(window.mpegts.Events.STATISTICS_INFO, (info) => {
+          const frames = Number(info?.decodedFrames ?? info?.decodedFramesDelta ?? -1);
+          if (frames >= 0 && frames !== session.lastDecodedFrames) {
+            session.lastDecodedFrames = frames;
+            session.lastProgressAt = Date.now();
+          }
+        });
+      }
       Promise.resolve(player.play()).catch(() => playbackStatus(session, "Pressione OK ou Play para iniciar.", "ready"));
       return;
     } catch {
@@ -1091,7 +1116,8 @@ function startWebPlayback(media, item, { preview = false } = {}) {
     lastTime: -1,
     started: false,
     networkRetries: 0,
-    mediaRetries: 0
+    mediaRetries: 0,
+    stallRetries: 0
   };
   const listen = (name, handler) => { media.addEventListener(name, handler); session.listeners.push([name, handler]); };
   listen("playing", () => {
@@ -1109,8 +1135,15 @@ function startWebPlayback(media, item, { preview = false } = {}) {
   listen("error", () => advanceWebCandidate(session, "Este formato não abriu nesta rota."));
   session.watchdog = setInterval(() => {
     if (session.destroyed || session.switching || media.paused || document.hidden) return;
-    const limit = preview ? 10_000 : 12_000;
-    if (Date.now() - session.lastProgressAt > limit) advanceWebCandidate(session, "O canal congelou e todas as rotas foram testadas.");
+    const limit = preview ? 15_000 : 20_000;
+    if (Date.now() - session.lastProgressAt <= limit) return;
+    if (session.stallRetries < 1) {
+      session.stallRetries += 1;
+      retryWebCandidate(session, "O canal congelou. Refazendo a conexão atual…");
+      return;
+    }
+    session.stallRetries = 0;
+    advanceWebCandidate(session, "O canal congelou. Mudando a rota de reprodução…");
   }, 2500);
   state[slot] = session;
   startWebCandidate(session);
