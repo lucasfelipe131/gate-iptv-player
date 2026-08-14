@@ -87,3 +87,10 @@ test("service worker nunca intercepta nem armazena streams e APIs ao vivo", () =
   assert.match(workerScript, /event\.request\.headers\.has\("range"\)/);
   assert.doesNotMatch(workerScript, /gate-player-v12/);
 });
+
+test("usa reservas maiores e não encerra o canal quando todas as rotas oscilam", () => {
+  assert.match(appScript, /stashInitialSize: session\.preview \? 3 \* 1024 \* 1024 : 8 \* 1024 \* 1024/);
+  assert.match(appScript, /maxBufferLength: preview \? 60 : 120/);
+  assert.match(appScript, /starvationLimit = preview \? 45_000 : 60_000/);
+  assert.match(appScript, /Mantendo o canal aberto e procurando uma rota estável/);
+});

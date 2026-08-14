@@ -36,6 +36,7 @@ test("carrega logos, capas, EPG e paginação automática no layout de TV", asyn
   });
 
   let xtreamConnectBody = null;
+  const catalogRequests = [];
   window.fetch = async (input, options = {}) => {
     const pathname = new URL(String(input), window.location.href).pathname;
     if (pathname === "/api/config") return reply({ annualPrice: 30, adDurationSeconds: 10, paymentAvailable: false });
@@ -64,7 +65,9 @@ test("carrega logos, capas, EPG e paginação automática no layout de TV", asyn
       }])) });
     }
     if (pathname === "/api/xtream/catalog") {
-      const isMovies = JSON.parse(options.body || "{}").kind === "movies";
+      const requestedKind = JSON.parse(options.body || "{}").kind;
+      catalogRequests.push(requestedKind);
+      const isMovies = requestedKind === "movies";
       return reply(isMovies ? {
         total: 2,
         items: [
@@ -117,8 +120,11 @@ test("carrega logos, capas, EPG e paginação automática no layout de TV", asyn
   assert.equal(JSON.parse(window.localStorage.getItem("gate.cache.session")).descriptor.type, "xtream");
 
   await waitFor(() => /2 filmes/.test(window.document.querySelector(".movies-launch small")?.textContent || ""));
+  await new Promise((resolve) => setTimeout(resolve, 260));
+  assert.deepEqual(catalogRequests, [], "a TV não deve baixar catálogos grandes antes de o usuário abri-los");
   window.document.querySelector(".movies-launch").click();
   await waitFor(() => window.document.querySelectorAll(".poster-grid .media-card").length === 2);
+  assert.deepEqual(catalogRequests, ["movies"]);
   assert.equal(window.document.querySelectorAll(".poster-grid .media-card.has-image").length, 2);
   assert.equal(window.document.querySelectorAll(".poster-grid .card-artwork").length, 2);
   assert.equal(window.document.querySelector(".poster-grid .media-card strong").textContent, "Filme Um");
@@ -138,6 +144,7 @@ test("carrega logos, capas, EPG e paginação automática no layout de TV", asyn
 
   window.document.querySelector(".series-launch").click();
   await waitFor(() => window.document.querySelectorAll(".poster-grid .media-card").length === 2);
+  assert.deepEqual(catalogRequests, ["movies", "series"]);
   window.document.querySelector(".poster-grid .media-card").click();
   assert.equal(window.document.querySelector("#details-primary").textContent, "Assistir episódio 1");
   window.document.querySelector("#details-primary").click();

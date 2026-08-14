@@ -10,7 +10,7 @@ import helmet from "helmet";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const port = Number(process.env.PORT || 3000);
-const APP_VERSION = "0.5.2-web";
+const APP_VERSION = "0.5.3";
 const MAX_CATALOG_ITEMS = 2000;
 const MAX_LIVE_ITEMS = 6000;
 const SESSION_TTL = 24 * 60 * 60 * 1000;

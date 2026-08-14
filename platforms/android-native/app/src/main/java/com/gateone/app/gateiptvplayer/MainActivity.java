@@ -57,10 +57,10 @@ import java.util.List;
 @OptIn(markerClass = UnstableApi.class)
 public final class MainActivity extends Activity {
     private static final String HOME = "https://gate-iptv-player-production.up.railway.app/";
-    private static final String USER_AGENT = "GATE-TV-NATIVE/0.5.1";
-    private static final long START_TIMEOUT_MS = 22_000L;
-    private static final long STALL_TIMEOUT_MS = 20_000L;
-    private static final int MAX_RETRY_ROUNDS = 2;
+    private static final String USER_AGENT = "GATE-TV-NATIVE/0.5.3";
+    private static final long START_TIMEOUT_MS = 35_000L;
+    private static final long STALL_TIMEOUT_MS = 45_000L;
+    private static final long BACKGROUND_RELEASE_DELAY_MS = 60_000L;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final List<PlaybackAttempt> attempts = new ArrayList<>();
@@ -83,7 +83,9 @@ public final class MainActivity extends Activity {
     private int retryRound;
     private long lastProgressAt;
     private long lastExoPosition = -1L;
+    private long lastVlcTime = -1L;
     private boolean switchingAttempt;
+    private boolean activityResumed;
 
     private static final class PlaybackAttempt {
         final boolean useVlc;
@@ -122,7 +124,7 @@ public final class MainActivity extends Activity {
         settings.setAllowFileAccess(false);
         settings.setAllowContentAccess(false);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
-        settings.setUserAgentString(settings.getUserAgentString() + " GATE-IPTV-PLAYER/0.5.1");
+        settings.setUserAgentString(settings.getUserAgentString() + " GATE-IPTV-PLAYER/0.5.3");
         catalogue.setWebChromeClient(new WebChromeClient());
         catalogue.setWebViewClient(new WebViewClient());
         catalogue.addJavascriptInterface(new PlayerBridge(), "GateNativePlayer");
@@ -165,6 +167,7 @@ public final class MainActivity extends Activity {
         root.addView(playerLayer, new FrameLayout.LayoutParams(1, 1));
 
         setContentView(root);
+        activityResumed = true;
         catalogue.loadUrl(HOME + (isTelevision() ? "?platform=androidtv" : "?platform=android"));
         handler.post(watchdog);
     }
@@ -241,11 +244,11 @@ public final class MainActivity extends Activity {
         if (url == null || !(url.startsWith("http://") || url.startsWith("https://"))) return;
         if ("hls".equalsIgnoreCase(streamType)) {
             attempts.add(new PlaybackAttempt(false, url, streamType, 0));
-            attempts.add(new PlaybackAttempt(true, url, streamType, 2_500));
-            attempts.add(new PlaybackAttempt(true, url, streamType, 5_000));
+            attempts.add(new PlaybackAttempt(true, url, streamType, 4_000));
+            attempts.add(new PlaybackAttempt(true, url, streamType, 8_000));
         } else {
-            attempts.add(new PlaybackAttempt(true, url, streamType, 2_500));
-            attempts.add(new PlaybackAttempt(true, url, streamType, 5_000));
+            attempts.add(new PlaybackAttempt(true, url, streamType, 6_000));
+            attempts.add(new PlaybackAttempt(true, url, streamType, 10_000));
             attempts.add(new PlaybackAttempt(false, url, streamType, 0));
         }
     }
@@ -253,22 +256,18 @@ public final class MainActivity extends Activity {
     private void startAttempt() {
         if (!nativePlaying) return;
         if (attemptIndex >= attempts.size()) {
-            if (retryRound < MAX_RETRY_ROUNDS) {
-                retryRound += 1;
-                attemptIndex = 0;
-                showState("Reconectando a fonte…");
-                handler.postDelayed(this::startAttempt, 1_500L * retryRound);
-                return;
-            } else {
-                showState("O canal não respondeu nos motores VLC e Media3.");
-                notifyWeb("onError", "Não foi possível estabilizar este canal. Tente outro canal ou verifique a origem da lista.");
-                return;
-            }
+            retryRound += 1;
+            attemptIndex = 0;
+            long delay = Math.min(15_000L, 2_000L * retryRound);
+            showState("Sinal indisponível. Mantendo o canal aberto e reconectando…");
+            handler.postDelayed(this::startAttempt, delay);
+            return;
         }
         PlaybackAttempt attempt = attempts.get(attemptIndex);
         switchingAttempt = false;
         playbackStarted = false;
         lastExoPosition = -1L;
+        lastVlcTime = -1L;
         lastProgressAt = SystemClock.elapsedRealtime();
         showState(attemptIndex == 0 ? "Conectando…" : "Ajustando motor e rota…");
         if (attempt.useVlc) startVlc(attempt); else startExoPlayer(attempt);
@@ -282,12 +281,11 @@ public final class MainActivity extends Activity {
         ArrayList<String> options = new ArrayList<>();
         options.add("--network-caching=" + attempt.networkCacheMs);
         options.add("--live-caching=" + attempt.networkCacheMs);
-        options.add("--file-caching=1000");
+        options.add("--file-caching=3000");
         options.add("--http-reconnect");
         options.add("--http-user-agent=" + USER_AGENT);
         options.add("--avcodec-hw=any");
         options.add("--drop-late-frames");
-        options.add("--skip-frames");
         options.add("--audio-time-stretch");
 
         libVlc = new LibVLC(this, options);
@@ -325,8 +323,8 @@ public final class MainActivity extends Activity {
 
         DefaultHttpDataSource.Factory httpFactory = new DefaultHttpDataSource.Factory()
                 .setUserAgent(USER_AGENT)
-                .setConnectTimeoutMs(15_000)
-                .setReadTimeoutMs(25_000)
+                .setConnectTimeoutMs(25_000)
+                .setReadTimeoutMs(45_000)
                 .setAllowCrossProtocolRedirects(true);
         DefaultDataSource.Factory dataSourceFactory = new DefaultDataSource.Factory(this, httpFactory);
         DefaultExtractorsFactory extractorsFactory = new DefaultExtractorsFactory()
@@ -336,7 +334,7 @@ public final class MainActivity extends Activity {
         DefaultMediaSourceFactory sourceFactory = new DefaultMediaSourceFactory(this, extractorsFactory)
                 .setDataSourceFactory(dataSourceFactory);
         DefaultLoadControl loadControl = new DefaultLoadControl.Builder()
-                .setBufferDurationsMs(5_000, 45_000, 1_500, 3_000)
+                .setBufferDurationsMs(10_000, 90_000, 3_000, 8_000)
                 .setPrioritizeTimeOverSizeThresholds(true)
                 .build();
 
@@ -377,6 +375,7 @@ public final class MainActivity extends Activity {
 
     private void markPlaying(String engine) {
         playbackStarted = true;
+        retryRound = 0;
         lastProgressAt = SystemClock.elapsedRealtime();
         playerState.setVisibility(View.GONE);
         notifyWeb("onEngine", engine);
@@ -401,6 +400,15 @@ public final class MainActivity extends Activity {
                     long position = exoPlayer.getCurrentPosition();
                     if (lastExoPosition < 0L || position > lastExoPosition + 150L) {
                         lastExoPosition = position;
+                        lastProgressAt = now;
+                    } else if (now - lastProgressAt > STALL_TIMEOUT_MS) {
+                        tryNextAttempt();
+                        lastProgressAt = now;
+                    }
+                } else if (playbackStarted && vlcPlayer != null && vlcPlayer.isPlaying()) {
+                    long time = vlcPlayer.getTime();
+                    if (time < 0L || lastVlcTime < 0L || time > lastVlcTime + 150L) {
+                        lastVlcTime = time;
                         lastProgressAt = now;
                     } else if (now - lastProgressAt > STALL_TIMEOUT_MS) {
                         tryNextAttempt();
@@ -516,8 +524,22 @@ public final class MainActivity extends Activity {
 
     @Override
     protected void onPause() {
-        if (nativePlaying) closeNativePlayer();
+        activityResumed = false;
+        handler.removeCallbacks(backgroundRelease);
+        handler.postDelayed(backgroundRelease, BACKGROUND_RELEASE_DELAY_MS);
         super.onPause();
+    }
+
+    private final Runnable backgroundRelease = () -> {
+        if (!activityResumed && nativePlaying) closeNativePlayer();
+    };
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        activityResumed = true;
+        handler.removeCallbacks(backgroundRelease);
+        enterImmersiveMode();
     }
 
     @Override
