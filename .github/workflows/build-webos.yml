@@ -1,0 +1,40 @@
+name: Build LG webOS IPK
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/build-webos.yml'
+      - 'platforms/lg-webos/**'
+      - 'scripts/package-webos.sh'
+  workflow_dispatch:
+
+jobs:
+  build-webos:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install LG webOS CLI
+        run: npm install -g @webos-tools/cli
+
+      - name: Build IPK
+        run: sh scripts/package-webos.sh
+
+      - name: Show package
+        run: ls -lh dist/webos
+
+      - name: Upload IPK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gate-iptv-player-lg-webos
+          path: dist/webos/*.ipk
+          if-no-files-found: error
+          retention-days: 30
