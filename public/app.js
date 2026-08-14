@@ -1351,6 +1351,8 @@ function closePlayer() {
 }
 
 function stopLivePreview() {
+  document.body.classList.remove("live-preview-open");
+  main.querySelector(".live-preview-stage")?.classList.remove("live-preview-immersive");
   destroyWebPlayback("webPreview");
   if (nativePlayerAvailable()) {
     try { window.GateNativePlayer.close(); } catch {}
@@ -1383,18 +1385,17 @@ function openLiveFullscreen() {
   if (nativePlayerAvailable()) {
     try { window.GateNativePlayer.fullscreen(); return; } catch {}
   }
+  stage?.classList.add("live-preview-immersive");
+  document.body.classList.add("live-preview-open");
+  preview.muted = false;
+  preview.defaultMuted = false;
   const request = stage?.requestFullscreen || stage?.webkitRequestFullscreen || preview.webkitEnterFullscreen;
   if (request) {
     try {
-      preview.muted = false;
-      preview.defaultMuted = false;
-      request.call(stage?.requestFullscreen || stage?.webkitRequestFullscreen ? stage : preview);
-      preview.play().catch(() => {});
-      return;
+      Promise.resolve(request.call(stage?.requestFullscreen || stage?.webkitRequestFullscreen ? stage : preview)).catch(() => {});
     } catch {}
   }
-  stopLivePreview();
-  playStream(state.selectedLive, "Reproduzindo", "auto", { immersive: true });
+  preview.play().catch(() => {});
 }
 
 async function openSeries(item) {
@@ -1748,8 +1749,11 @@ document.addEventListener("keydown", (event) => {
   const playPausePressed = [13, 19, 415, 10252].includes(code) || event.key === "Enter" || event.key === " ";
   const favoritePressed = [184, 404].includes(code) || event.key?.toLowerCase?.() === "f";
   const playerOpen = !playerModal.classList.contains("hidden");
-  if (backPressed && (document.fullscreenElement || document.webkitFullscreenElement)) {
+  const liveFullscreen = main.querySelector(".live-preview-stage.live-preview-immersive");
+  if (backPressed && (document.fullscreenElement || document.webkitFullscreenElement || liveFullscreen)) {
     event.preventDefault();
+    liveFullscreen?.classList.remove("live-preview-immersive");
+    document.body.classList.remove("live-preview-open");
     if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {});
     else if (document.webkitFullscreenElement && document.webkitExitFullscreen) {
       try { document.webkitExitFullscreen(); } catch {}
@@ -1785,6 +1789,13 @@ document.addEventListener("keydown", (event) => {
     else if (state.view !== "home") renderHome();
   }
 });
+const syncWebLiveFullscreen = () => {
+  if (document.fullscreenElement || document.webkitFullscreenElement) return;
+  main.querySelector(".live-preview-stage.live-preview-immersive")?.classList.remove("live-preview-immersive");
+  document.body.classList.remove("live-preview-open");
+};
+document.addEventListener("fullscreenchange", syncWebLiveFullscreen);
+document.addEventListener("webkitfullscreenchange", syncWebLiveFullscreen);
 document.addEventListener("focusin", (event) => {
   const card = event.target.closest?.(".catalog-grid .media-card, .live-channel-row");
   if (!card) return;

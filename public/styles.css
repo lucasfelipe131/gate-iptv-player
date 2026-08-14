@@ -154,6 +154,8 @@ h1 { margin: 0; letter-spacing: -.035em; }
 .live-preview-panel { min-width: 0; height: 100%; padding: 12px; border: 1px solid var(--line); border-radius: 15px; background: rgba(8,14,25,.92); overflow-y: auto; overscroll-behavior: contain; contain: layout paint; }
 .live-preview-stage { position: relative; aspect-ratio: 16 / 9; border-radius: 12px; overflow: hidden; background: #010204; cursor: pointer; }
 .live-preview-stage video { width: 100%; height: 100%; object-fit: contain; background: #000; }
+.live-preview-stage.live-preview-immersive { position: fixed; inset: 0; z-index: 220; width: 100vw; width: 100dvw; height: 100vh; height: 100dvh; aspect-ratio: auto; border-radius: 0; background: #000; }
+.live-preview-open { overflow: hidden !important; }
 .preview-placeholder { display: none; position: absolute; inset: 0; place-items: center; align-content: center; gap: 12px; background: radial-gradient(circle at 50% 45%, #152a48, #03060b 70%); color: var(--muted); text-align: center; }
 .preview-placeholder.visible { display: grid; }
 .preview-placeholder img { width: min(32%, 120px); max-height: 80px; object-fit: contain; }
