@@ -16,7 +16,7 @@ sh scripts/package-webos.sh
 
 1. Instale **Developer Mode** pela LG Content Store e ative o modo desenvolvedor.
 2. Cadastre a TV na CLI com `ares-setup-device` e obtenha a chave com `ares-novacom --getkey`.
-3. Instale o pacote com `ares-install -d myTV dist/webos/com.gateone.app.gateiptvplayer_0.3.1_all.ipk`.
+3. Instale o pacote com `ares-install -d myTV dist/webos/com.gateone.app.gateiptvplayer_0.3.2_all.ipk`.
 4. Abra com `ares-launch -d myTV com.gateone.app.gateiptvplayer`.
 
 O app não inclui canais, filmes, séries, listas ou credenciais. Cada usuário conecta apenas uma fonte que tenha autorização para utilizar.
