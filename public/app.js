@@ -1,7 +1,9 @@
-const APP_VERSION = "0.5.2-web";
+const APP_VERSION = "0.5.3";
 const CACHE_DB = "gate-player-cache-v1";
 const CACHE_STORE = "device";
 const FAVORITES_KEY = "gate.favorites.v1";
+const catalogGroupCache = new WeakMap();
+const catalogSearchCache = new WeakMap();
 
 function readJsonStorage(key, fallback) {
   try { return JSON.parse(localStorage.getItem(key) || "") ?? fallback; }
@@ -236,8 +238,8 @@ function renderConnectedSummary() {
   const expires = formatExpiryDate(state.account?.expiresAt);
   const catalogLabel = (kind, singular) => {
     if (state.catalogErrors.has(kind)) return "Não foi possível carregar · pressione OK";
-    if (!state.loadedCatalogs.has(kind) && state.sessionId) return `Carregando ${singular.toLowerCase()}…`;
     const total = Number(state.counts[kind] ?? state[kind].length);
+    if (!state.loadedCatalogs.has(kind) && state.sessionId && !total) return `Abrir catálogo de ${singular.toLowerCase()}s`;
     return `${total.toLocaleString("pt-BR")} ${singular.toLowerCase()}${total === 1 ? "" : "s"}`;
   };
   return `<section class="account-strip">
@@ -364,19 +366,23 @@ function updateLivePreviewEpg() {
 
 async function queueEpgForCards(cards = [...main.querySelectorAll("[data-live-id]")]) {
   if (!state.sessionId) return;
+  const sessionId = state.sessionId;
+  const epg = state.epg;
+  const pending = state.epgPending;
   const streamIds = [...new Set(cards.map((card) => String(card.dataset.liveId || "")))]
-    .filter((id) => id && !state.epg.has(id) && !state.epgPending.has(id))
+    .filter((id) => id && !epg.has(id) && !pending.has(id))
     .slice(0, 10);
   if (!streamIds.length) return;
-  streamIds.forEach((id) => state.epgPending.add(id));
+  streamIds.forEach((id) => pending.add(id));
   try {
-    const payload = await api("/api/xtream/epg", { method: "POST", body: JSON.stringify({ sessionId: state.sessionId, streamIds }) });
-    streamIds.forEach((id) => state.epg.set(id, payload.items?.[id] || {}));
+    const payload = await api("/api/xtream/epg", { method: "POST", body: JSON.stringify({ sessionId, streamIds }) });
+    if (state.sessionId !== sessionId) return;
+    streamIds.forEach((id) => epg.set(id, payload.items?.[id] || {}));
   } catch {
-    streamIds.forEach((id) => state.epg.set(id, {}));
+    if (state.sessionId === sessionId) streamIds.forEach((id) => epg.set(id, {}));
   } finally {
-    streamIds.forEach((id) => state.epgPending.delete(id));
-    updateEpgCards();
+    streamIds.forEach((id) => pending.delete(id));
+    if (state.sessionId === sessionId) updateEpgCards();
   }
 }
 
@@ -392,10 +398,37 @@ function titleFor(kind) {
   return ({ live: "TV ao vivo", movies: "Filmes", series: "Séries", episodes: "Episódios" })[kind] || "Catálogo";
 }
 
+function catalogGroupSummary(items, limit) {
+  let summary = catalogGroupCache.get(items);
+  if (!summary) {
+    const counts = new Map();
+    const order = [];
+    for (const item of items) {
+      const group = item.group || "Outros";
+      if (!counts.has(group)) order.push(group);
+      counts.set(group, (counts.get(group) || 0) + 1);
+    }
+    summary = { counts, order };
+    catalogGroupCache.set(items, summary);
+  }
+  const groups = ["Todos", ...summary.order.slice(0, Math.max(0, limit - 1))];
+  return { groups, count: (group) => group === "Todos" ? items.length : summary.counts.get(group) || 0 };
+}
+
+function catalogSearchText(item) {
+  if (!item || typeof item !== "object") return "";
+  let value = catalogSearchCache.get(item);
+  if (!value) {
+    value = `${item.name || ""} ${item.group || ""}`.toLocaleLowerCase("pt-BR");
+    catalogSearchCache.set(item, value);
+  }
+  return value;
+}
+
 function filteredCatalogItems(kind) {
   const items = currentItems(kind);
   const query = state.filter.query.trim().toLocaleLowerCase("pt-BR");
-  return items.filter((item) => (state.filter.group === "Todos" || item.group === state.filter.group) && (!query || `${item.name} ${item.group || ""}`.toLocaleLowerCase("pt-BR").includes(query)));
+  return items.filter((item) => (state.filter.group === "Todos" || (item.group || "Outros") === state.filter.group) && (!query || catalogSearchText(item).includes(query)));
 }
 
 let catalogObserver = null;
@@ -407,7 +440,8 @@ function renderCatalog(kind, heading = "", description = "") {
   if (kind === "live") return renderLiveCatalog();
   stopLivePreview();
   const items = currentItems(kind);
-  const groups = ["Todos", ...new Set(items.map((item) => item.group || "Outros"))].slice(0, 80);
+  const groupSummary = catalogGroupSummary(items, 80);
+  const groups = groupSummary.groups;
   if (!groups.includes(state.filter.group)) state.filter.group = "Todos";
   const filtered = filteredCatalogItems(kind);
   const visible = filtered.slice(0, state.visibleCount);
@@ -425,7 +459,7 @@ function renderCatalog(kind, heading = "", description = "") {
     <section class="catalog-layout">
       <aside class="catalog-categories">
         <label class="search-box">${gateIcon("search")}<input class="focusable" data-focusable id="catalog-search" type="search" placeholder="Buscar" value="${escapeHtml(state.filter.query)}" /></label>
-        <div class="category-row">${groups.map((group) => `<button class="category-chip focusable ${group === state.filter.group ? "active" : ""}" data-group="${escapeHtml(group)}" data-focusable><span>${escapeHtml(group)}</span><b>${items.filter((item) => (group === "Todos" || (item.group || "Outros") === group)).length}</b></button>`).join("")}</div>
+        <div class="category-row">${groups.map((group) => `<button class="category-chip focusable ${group === state.filter.group ? "active" : ""}" data-group="${escapeHtml(group)}" data-focusable><span>${escapeHtml(group)}</span><b>${groupSummary.count(group)}</b></button>`).join("")}</div>
       </aside>
       <div class="catalog-results">
         ${filtered.length ? `<section class="catalog-grid ${kind === "movies" || kind === "series" ? "poster-grid" : ""}">${visible.map((item) => mediaCard(item, kind)).join("")}</section>${visible.length < filtered.length ? `<div class="catalog-autoload" data-auto-load data-kind="${escapeHtml(kind)}" data-heading="${escapeHtml(heading)}" role="status"><i></i><span>Carregando automaticamente…</span></div>` : ""}` : '<div class="empty-state">Nenhum item corresponde a esta busca.</div>'}
@@ -450,7 +484,7 @@ function liveChannelRow(item) {
   const favorite = isFavorite(item, "live");
   return `<button class="live-channel-row focusable ${selected ? "active" : ""} ${favorite ? "is-favorite" : ""}" data-focusable data-live-select="${escapeHtml(item.id || "")}" data-live-id="${escapeHtml(item.id || "")}">
     <span class="channel-number">${escapeHtml(item.id || "•")}</span>
-    <span class="channel-logo">${item.logo ? `<img src="${escapeHtml(item.logo)}" alt="">` : gateIcon("live")}</span>
+    <span class="channel-logo">${item.logo ? `<img src="${escapeHtml(item.logo)}" alt="" loading="lazy" decoding="async">` : gateIcon("live")}</span>
     <span><strong>${escapeHtml(item.name)}</strong><small class="card-now">Carregando guia…</small></span>
     <b>${favorite ? "★" : gateIcon("play")}</b>
   </button>`;
@@ -478,7 +512,8 @@ function renderLiveCatalog() {
   catalogObserver?.disconnect();
   state.view = "live";
   const items = state.channels;
-  const groups = ["Todos", ...new Set(items.map((item) => item.group || "Outros"))].slice(0, 100);
+  const groupSummary = catalogGroupSummary(items, 100);
+  const groups = groupSummary.groups;
   if (!groups.includes(state.filter.group)) state.filter.group = "Todos";
   const filtered = filteredCatalogItems("live");
   if (state.selectedLive && !filtered.some((item) => String(item.id) === String(state.selectedLive.id))) state.selectedLive = null;
@@ -491,7 +526,7 @@ function renderLiveCatalog() {
     <section class="live-layout">
       <aside class="catalog-categories live-categories">
         <label class="search-box">${gateIcon("search")}<input class="focusable" data-focusable id="catalog-search" type="search" placeholder="Buscar canal" value="${escapeHtml(state.filter.query)}"></label>
-        <div class="category-row">${groups.map((group) => `<button class="category-chip focusable ${group === state.filter.group ? "active" : ""}" data-group="${escapeHtml(group)}" data-focusable><span>${escapeHtml(group)}</span><b>${items.filter((item) => group === "Todos" || (item.group || "Outros") === group).length}</b></button>`).join("")}</div>
+        <div class="category-row">${groups.map((group) => `<button class="category-chip focusable ${group === state.filter.group ? "active" : ""}" data-group="${escapeHtml(group)}" data-focusable><span>${escapeHtml(group)}</span><b>${groupSummary.count(group)}</b></button>`).join("")}</div>
       </aside>
       <section class="live-channel-column">
         <div class="channel-list-head"><span>CANAL</span><span>PROGRAMAÇÃO</span></div>
@@ -587,23 +622,15 @@ function loadCatalogData(kind) {
   return request;
 }
 
-async function preloadMainCatalogs() {
-  if (!state.sessionId) return;
-  const sessionId = state.sessionId;
-  for (const kind of ["movies", "series"]) {
-    if (state.sessionId !== sessionId) return;
-    await loadCatalogData(kind).catch(() => []);
-    if (state.view === "home" && state.source) renderHome();
-    await new Promise((resolve) => setTimeout(resolve, 60));
-  }
-}
-
 function bindCatalogFilters(kind, heading, description = "") {
   document.querySelector("#catalog-search")?.addEventListener("input", (event) => {
+    const input = event.currentTarget;
     state.filter.query = event.target.value;
     state.visibleCount = state.pageSize;
     clearTimeout(bindCatalogFilters.timer);
-    bindCatalogFilters.timer = setTimeout(() => renderCatalog(kind, heading, description), 180);
+    bindCatalogFilters.timer = setTimeout(() => {
+      if (state.view === kind && input.isConnected) renderCatalog(kind, heading, description);
+    }, 220);
   });
   main.querySelectorAll("[data-group]").forEach((button) => button.addEventListener("click", () => {
     state.filter.group = button.dataset.group;
@@ -1410,7 +1437,6 @@ function afterConnected(payload, descriptor = state.connectionDescriptor, option
   state.filter = { query: "", group: "Todos" };
   state.visibleCount = state.pageSize;
   renderHome();
-  preloadMainCatalogs();
   saveDeviceSnapshot();
   if (!options.silent) showToast(`Lista conectada e salva neste aparelho. Validade: ${formatExpiryDate(state.account?.expiresAt)}.`);
 }
@@ -1582,7 +1608,10 @@ function moveFocus(direction) {
     if (!valid) return null;
     const primary = direction === "left" || direction === "right" ? Math.abs(x - cx) : Math.abs(y - cy);
     const secondary = direction === "left" || direction === "right" ? Math.abs(y - cy) : Math.abs(x - cx);
-    return { element, score: primary + secondary * 2.2 };
+    const crossOverlap = direction === "left" || direction === "right"
+      ? Math.max(0, Math.min(current.bottom, box.bottom) - Math.max(current.top, box.top))
+      : Math.max(0, Math.min(current.right, box.right) - Math.max(current.left, box.left));
+    return { element, score: primary + secondary * (crossOverlap > 0 ? 1.35 : 4.2) };
   }).filter(Boolean).sort((a, b) => a.score - b.score);
   candidates[0]?.element.focus();
   candidates[0]?.element.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
