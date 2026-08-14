@@ -202,10 +202,61 @@
     return element.matches("input, textarea, select, [contenteditable='true']");
   }
 
+  function playerIsOpen() {
+    var player = document.getElementById("player-modal");
+    return Boolean(player && !player.classList.contains("hidden"));
+  }
+
+  function handlePlayerRemote(event, code, direction) {
+    if (!playerIsOpen()) return false;
+    var media = document.getElementById("video-player");
+    if (!media) return false;
+
+    if (direction) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (direction === "left" || direction === "right") {
+        if (Number.isFinite(media.duration)) media.currentTime = Math.max(0, media.currentTime + (direction === "left" ? -10 : 10));
+      } else {
+        media.volume = Math.min(1, Math.max(0, media.volume + (direction === "up" ? .1 : -.1)));
+      }
+      return true;
+    }
+
+    if (code === 13 || code === 19 || code === 415 || code === 10252 || event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (media.paused) {
+        try { Promise.resolve(media.play()).catch(function () {}); } catch (_error) {}
+      } else {
+        media.pause();
+      }
+      return true;
+    }
+    return false;
+  }
+
   window.addEventListener("keydown", function (event) {
     var code = Number(event.keyCode || event.which || 0);
     var direction = keyDirection(event, code);
     var active = document.activeElement;
+    var backPressed = code === 461 || code === 10009 || event.key === "BrowserBack" || event.key === "Escape";
+
+    if (backPressed) {
+      event.preventDefault();
+      return;
+    }
+
+    if (handlePlayerRemote(event, code, direction)) return;
+
+    var immersive = document.querySelector(".live-preview-stage.live-preview-immersive");
+    if (immersive) {
+      if (direction || code === 13 || event.key === "Enter") {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      }
+      return;
+    }
 
     if (direction) {
       if (isEditable(active) && (direction === "left" || direction === "right")) return;
@@ -215,13 +266,19 @@
       return;
     }
 
-    if (code === 461 || code === 10009 || event.key === "BrowserBack" || event.key === "Escape") {
-      event.preventDefault();
-      return;
-    }
-
     if (code === 13 || event.key === "Enter") {
       if (isEditable(active)) return;
+
+      if (active && active.matches && active.matches(".live-channel-row.active")) {
+        var previewStage = document.querySelector(".live-preview-stage");
+        if (previewStage && typeof previewStage.click === "function") {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          previewStage.click();
+          return;
+        }
+      }
+
       if (active && active !== document.body && active !== document.documentElement && typeof active.click === "function") {
         event.preventDefault();
         event.stopImmediatePropagation();
@@ -253,6 +310,6 @@
   window.GateWebOSRemote = {
     ensureFocus: ensureFocus,
     moveFocus: moveFocus,
-    version: "1.0.0"
+    version: "1.0.1"
   };
 }());
