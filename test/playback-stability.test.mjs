@@ -105,6 +105,8 @@ test("inicia a prévia web em modo compatível com autoplay e recupera início p
 });
 
 test("sair da tela cheia volta à lista de canais sem retornar à home", () => {
-  assert.match(appScript, /backPressed && \(document\.fullscreenElement \|\| document\.webkitFullscreenElement\)/);
+  assert.match(appScript, /live-preview-stage\.live-preview-immersive/);
+  assert.match(appScript, /backPressed && \(document\.fullscreenElement \|\| document\.webkitFullscreenElement \|\| liveFullscreen\)/);
   assert.match(appScript, /document\.exitFullscreen\(\)\.catch/);
+  assert.match(appScript, /document\.body\.classList\.remove\("live-preview-open"\)/);
 });
