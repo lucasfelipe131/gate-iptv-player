@@ -494,7 +494,7 @@ function renderLivePreview(item) {
   const epg = item?.id ? state.epg.get(String(item.id)) : null;
   return `<aside class="live-preview-panel">
     <div class="live-preview-stage">
-      <video id="live-preview-video" playsinline></video>
+      <video id="live-preview-video" playsinline muted autoplay></video>
       <div class="preview-placeholder ${item ? "" : "visible"}">
         ${item?.logo ? `<img src="${escapeHtml(item.logo)}" alt="">` : gateIcon("live", "preview-icon")}
         <span>${item ? "Selecione o canal novamente para tela cheia" : "Escolha um canal"}</span>
@@ -1012,6 +1012,24 @@ function playbackStatus(session, message, type = "loading") {
   if (!session.preview) showPlayerStatus(message, type);
 }
 
+function requestWebMediaPlay(session) {
+  if (!session || session.destroyed) return;
+  session.lastPlayAttemptAt = Date.now();
+  if (session.preview) {
+    session.media.muted = true;
+    session.media.defaultMuted = true;
+    session.media.autoplay = true;
+    session.media.playsInline = true;
+  }
+  try {
+    Promise.resolve(session.media.play()).catch(() => {
+      playbackStatus(session, "Pressione OK ou Play para iniciar.", "ready");
+    });
+  } catch {
+    playbackStatus(session, "Pressione OK ou Play para iniciar.", "ready");
+  }
+}
+
 function bufferedAhead(media) {
   const currentTime = Number(media?.currentTime);
   if (!Number.isFinite(currentTime) || !media?.buffered) return 0;
@@ -1077,6 +1095,7 @@ function startWebCandidate(session, reason = "") {
   session.lastTime = -1;
   session.lastDecodedFrames = -1;
   session.started = false;
+  session.lastPlayAttemptAt = 0;
   playbackStatus(session, candidate.direct ? "Testando rota direta mais rápida…" : "Abrindo pela rota compatível…");
 
   if (candidate.type === "hls" && window.Hls?.isSupported()) {
@@ -1085,7 +1104,7 @@ function startWebCandidate(session, reason = "") {
     if (session.preview) state.previewHls = hls; else state.hls = hls;
     hls.on(window.Hls.Events.MANIFEST_PARSED, () => {
       if (session.destroyed) return;
-      session.media.play().catch(() => playbackStatus(session, "Pressione OK ou Play para iniciar.", "ready"));
+      requestWebMediaPlay(session);
     });
     hls.on(window.Hls.Events.LEVEL_SWITCHED, (_event, data) => {
       if (!session.preview) updatePlayerQuality(hls.levels?.[data.level]?.height || session.media.videoHeight);
@@ -1150,7 +1169,10 @@ function startWebCandidate(session, reason = "") {
           }
         });
       }
-      Promise.resolve(player.play()).catch(() => playbackStatus(session, "Pressione OK ou Play para iniciar.", "ready"));
+      Promise.resolve(player.play()).catch(() => {
+        if (session.preview) requestWebMediaPlay(session);
+        else playbackStatus(session, "Pressione OK ou Play para iniciar.", "ready");
+      });
       return;
     } catch {
       advanceWebCandidate(session, "Este navegador não conseguiu preparar o fluxo MPEG-TS.");
@@ -1159,7 +1181,7 @@ function startWebCandidate(session, reason = "") {
   }
 
   session.media.src = candidate.url;
-  session.media.play().catch(() => playbackStatus(session, "Pressione OK ou Play para iniciar.", "ready"));
+  requestWebMediaPlay(session);
 }
 
 function startWebPlayback(media, item, { preview = false } = {}) {
@@ -1185,8 +1207,15 @@ function startWebPlayback(media, item, { preview = false } = {}) {
     networkRetries: 0,
     mediaRetries: 0,
     stallRetries: 0,
-    routeRounds: 0
+    routeRounds: 0,
+    lastPlayAttemptAt: 0
   };
+  if (preview) {
+    media.muted = true;
+    media.defaultMuted = true;
+    media.autoplay = true;
+    media.playsInline = true;
+  }
   const listen = (name, handler) => { media.addEventListener(name, handler); session.listeners.push([name, handler]); };
   listen("playing", () => {
     session.started = true;
@@ -1210,8 +1239,18 @@ function startWebPlayback(media, item, { preview = false } = {}) {
   });
   listen("error", () => advanceWebCandidate(session, "Este formato não abriu nesta rota."));
   session.watchdog = setInterval(() => {
-    if (session.destroyed || session.switching || media.paused || document.hidden) return;
+    if (session.destroyed || session.switching || document.hidden) return;
     const now = Date.now();
+    if (media.paused) {
+      if (!session.started) {
+        if (now - session.lastPlayAttemptAt >= 2_500) requestWebMediaPlay(session);
+        const startupLimit = preview ? 18_000 : 35_000;
+        if (now - session.lastProgressAt > startupLimit) {
+          advanceWebCandidate(session, "A reprodução não iniciou nesta rota. Tentando a alternativa…");
+        }
+      }
+      return;
+    }
     const recentProgress = now - session.lastProgressAt <= 12_000;
     const haveFutureData = recentProgress && (Number(media.readyState) >= 3 || bufferedAhead(media) > 1.25);
     if (haveFutureData) {
@@ -1346,7 +1385,13 @@ function openLiveFullscreen() {
   }
   const request = stage?.requestFullscreen || stage?.webkitRequestFullscreen || preview.webkitEnterFullscreen;
   if (request) {
-    try { request.call(stage?.requestFullscreen || stage?.webkitRequestFullscreen ? stage : preview); preview.play().catch(() => {}); return; } catch {}
+    try {
+      preview.muted = false;
+      preview.defaultMuted = false;
+      request.call(stage?.requestFullscreen || stage?.webkitRequestFullscreen ? stage : preview);
+      preview.play().catch(() => {});
+      return;
+    } catch {}
   }
   stopLivePreview();
   playStream(state.selectedLive, "Reproduzindo", "auto", { immersive: true });
@@ -1703,6 +1748,14 @@ document.addEventListener("keydown", (event) => {
   const playPausePressed = [13, 19, 415, 10252].includes(code) || event.key === "Enter" || event.key === " ";
   const favoritePressed = [184, 404].includes(code) || event.key?.toLowerCase?.() === "f";
   const playerOpen = !playerModal.classList.contains("hidden");
+  if (backPressed && (document.fullscreenElement || document.webkitFullscreenElement)) {
+    event.preventDefault();
+    if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {});
+    else if (document.webkitFullscreenElement && document.webkitExitFullscreen) {
+      try { document.webkitExitFullscreen(); } catch {}
+    }
+    return;
+  }
   if (playerOpen) {
     if (backPressed || event.key === "Backspace") { event.preventDefault(); closePlayer(); return; }
     if (playPausePressed) { event.preventDefault(); video.paused ? video.play() : video.pause(); return; }
