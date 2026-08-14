@@ -37,6 +37,59 @@
   user-select: text;
 }
 
+/* Explicit inset fallbacks for older webOS Chromium builds. */
+body.webos-tv::before {
+  top: 8vh;
+  right: 4vw;
+  bottom: 4vh;
+  left: 40vw;
+}
+
+.webos-tv .modal,
+.webos-tv .ad-overlay {
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+}
+
+.webos-tv .media-card .card-artwork,
+.webos-tv .preview-placeholder,
+.webos-tv .details-backdrop::after {
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+}
+
+.webos-tv .player-status {
+  top: 0;
+  right: 0;
+  bottom: 50px;
+  left: 0;
+}
+
+.webos-tv .player-modal-immersive .player-status {
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+}
+
+.webos-tv .details-backdrop {
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 34%;
+}
+
+.webos-tv .live-preview-stage.live-preview-immersive {
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+}
+
 /* Chromium 79 does not support every modern aspect-ratio/flex-gap behavior
    used by newer browsers. These explicit sizes keep the TV layout stable. */
 .webos-tv .live-preview-stage {
@@ -48,7 +101,10 @@
 .webos-tv .live-preview-stage video,
 .webos-tv .live-preview-stage .preview-placeholder {
   position: absolute;
-  inset: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
   width: 100%;
   height: 100%;
 }
@@ -74,13 +130,13 @@
   min-height: 238px;
 }
 
-/* Flex gap fallback for the Chromium 79 generation of webOS. */
+/* Flex-gap fallbacks used by the 2021 Chromium 79 engine. */
 .webos-tv .button-row > * + * { margin-left: 12px; }
 .webos-tv .top-actions > * + * { margin-left: 9px; }
 .webos-tv .tabs > * + * { margin-left: 6px; }
 .webos-tv .details-meta > * + * { margin-left: 8px; }
-.webos-tv .source-form > * + * { margin-top: 14px; }
-.webos-tv .form-grid > * + * { margin-left: 13px; }
+.webos-tv .top-brand img { margin-right: 11px; }
+.webos-tv .search-box .ui-icon { margin-right: 9px; }
 
 .webos-tv .library-launchers {
   width: 100%;
