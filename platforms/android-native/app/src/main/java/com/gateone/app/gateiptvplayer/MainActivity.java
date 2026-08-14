@@ -57,7 +57,7 @@ import java.util.List;
 @OptIn(markerClass = UnstableApi.class)
 public final class MainActivity extends Activity {
     private static final String HOME = "https://gate-iptv-player-production.up.railway.app/";
-    private static final String USER_AGENT = "GATE-TV-NATIVE/0.5.1";
+    private static final String USER_AGENT = "GATE-TV-NATIVE/0.5.3";
     private static final long START_TIMEOUT_MS = 22_000L;
     private static final long STALL_TIMEOUT_MS = 20_000L;
     private static final int MAX_RETRY_ROUNDS = 2;
@@ -122,7 +122,7 @@ public final class MainActivity extends Activity {
         settings.setAllowFileAccess(false);
         settings.setAllowContentAccess(false);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
-        settings.setUserAgentString(settings.getUserAgentString() + " GATE-IPTV-PLAYER/0.5.1");
+        settings.setUserAgentString(settings.getUserAgentString() + " GATE-IPTV-PLAYER/0.5.3");
         catalogue.setWebChromeClient(new WebChromeClient());
         catalogue.setWebViewClient(new WebViewClient());
         catalogue.addJavascriptInterface(new PlayerBridge(), "GateNativePlayer");
