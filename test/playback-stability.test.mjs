@@ -94,3 +94,17 @@ test("usa reservas maiores e não encerra o canal quando todas as rotas oscilam"
   assert.match(appScript, /starvationLimit = preview \? 45_000 : 60_000/);
   assert.match(appScript, /Mantendo o canal aberto e procurando uma rota estável/);
 });
+
+
+test("inicia a prévia web em modo compatível com autoplay e recupera início pausado", () => {
+  assert.match(appScript, /<video id="live-preview-video" playsinline muted autoplay>/);
+  assert.match(appScript, /session\.media\.muted = true/);
+  assert.match(appScript, /now - session\.lastPlayAttemptAt >= 2_500/);
+  assert.match(appScript, /startupLimit = preview \? 18_000 : 35_000/);
+  assert.doesNotMatch(appScript, /session\.switching \|\| media\.paused \|\| document\.hidden/);
+});
+
+test("sair da tela cheia volta à lista de canais sem retornar à home", () => {
+  assert.match(appScript, /backPressed && \(document\.fullscreenElement \|\| document\.webkitFullscreenElement\)/);
+  assert.match(appScript, /document\.exitFullscreen\(\)\.catch/);
+});
