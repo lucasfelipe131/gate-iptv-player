@@ -7,6 +7,9 @@ on:
     paths:
       - '.github/workflows/build-webos.yml'
       - 'platforms/lg-webos/**'
+      - 'public/index.html'
+      - 'public/webos.css'
+      - 'public/webos-remote.js'
       - 'scripts/package-webos.sh'
   workflow_dispatch:
 
@@ -21,6 +24,15 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: 'npm'
+
+      - name: Validate web and webOS code
+        run: |
+          npm ci
+          node --check public/app.js
+          node --check public/webos-remote.js
+          node -e "JSON.parse(require('fs').readFileSync('platforms/lg-webos/appinfo.json','utf8'))"
+          npm test
 
       - name: Install LG webOS CLI
         run: npm install -g @webos-tools/cli
