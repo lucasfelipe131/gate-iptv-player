@@ -1,5 +1,5 @@
-const CACHE = "gate-player-v13-web-stability";
-const ASSETS = ["/", "/styles.css?v=0.5.2-web", "/app.js?v=0.5.2-web", "/gate-icon.svg", "/manifest.webmanifest", "/vendor/hls.min.js?v=0.5.2-web", "/vendor/mpegts.min.js?v=0.5.2-web"];
+const CACHE = "gate-player-v14-fluid-ui";
+const ASSETS = ["/", "/styles.css?v=0.5.3", "/app.js?v=0.5.3", "/gate-icon.svg", "/manifest.webmanifest", "/vendor/hls.min.js?v=0.5.3", "/vendor/mpegts.min.js?v=0.5.3"];
 self.addEventListener("install", (event) => event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(ASSETS)).then(() => self.skipWaiting())));
 self.addEventListener("activate", (event) => event.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((key) => key !== CACHE).map((key) => caches.delete(key)))).then(() => self.clients.claim())));
 self.addEventListener("fetch", (event) => {
