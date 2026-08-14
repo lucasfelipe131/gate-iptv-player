@@ -876,12 +876,12 @@ function adaptiveHlsOptions(preview = false) {
     capLevelToPlayerSize: true,
     enableWorker: true,
     lowLatencyMode: false,
-    backBufferLength: preview ? 30 : 60,
-    maxBufferLength: preview ? 42 : 90,
-    maxMaxBufferLength: preview ? 90 : 240,
-    abrBandWidthFactor: .75,
-    abrBandWidthUpFactor: .55,
-    abrEwmaDefaultEstimate: 2_500_000,
+    backBufferLength: preview ? 45 : 90,
+    maxBufferLength: preview ? 60 : 120,
+    maxMaxBufferLength: preview ? 180 : 300,
+    abrBandWidthFactor: .65,
+    abrBandWidthUpFactor: .45,
+    abrEwmaDefaultEstimate: 1_500_000,
     liveSyncDurationCount: preview ? 3 : 5,
     liveMaxLatencyDurationCount: preview ? 10 : 18,
     maxLiveSyncPlaybackRate: 1.04,
@@ -1029,6 +1029,7 @@ function markPlaybackProgress(session) {
   session.lastProgressAt = Date.now();
   session.starvedAt = 0;
   session.stallRetries = 0;
+  session.routeRounds = 0;
 }
 
 function advanceWebCandidate(session, message) {
@@ -1045,11 +1046,11 @@ function advanceWebCandidate(session, message) {
   }, session.preview ? 180 : 320);
 }
 
-function retryWebCandidate(session, message) {
+function retryWebCandidate(session, message, { preserveNetworkRetries = false } = {}) {
   if (!session || session.destroyed || session.switching) return;
   session.switching = true;
   clearWebEngine(session);
-  session.networkRetries = 0;
+  if (!preserveNetworkRetries) session.networkRetries = 0;
   session.mediaRetries = 0;
   session.lastProgressAt = Date.now();
   session.starvedAt = 0;
@@ -1064,8 +1065,11 @@ function startWebCandidate(session, reason = "") {
   if (!session || session.destroyed) return;
   const candidate = session.candidates[session.index];
   if (!candidate) {
-    playbackStatus(session, reason || "Nenhuma rota compatível conseguiu abrir este conteúdo.", "error");
-    if (session.preview) main.querySelector(".preview-placeholder")?.classList.add("visible");
+    session.routeRounds += 1;
+    session.index = 0;
+    const delay = Math.min(15_000, 2_000 * session.routeRounds);
+    playbackStatus(session, reason || "Mantendo o canal aberto e procurando uma rota estável…");
+    setTimeout(() => startWebCandidate(session, "Nova tentativa de conexão…"), delay);
     return;
   }
   session.lastProgressAt = Date.now();
@@ -1114,7 +1118,7 @@ function startWebCandidate(session, reason = "") {
       const player = window.mpegts.createPlayer({ type: "mpegts", isLive: true, url: candidate.url }, {
         enableWorker: true,
         enableStashBuffer: true,
-        stashInitialSize: session.preview ? 1024 * 1024 : 3 * 1024 * 1024,
+        stashInitialSize: session.preview ? 3 * 1024 * 1024 : 8 * 1024 * 1024,
         lazyLoad: false,
         autoCleanupSourceBuffer: true,
         autoCleanupMaxBackwardDuration: 60,
@@ -1126,7 +1130,14 @@ function startWebCandidate(session, reason = "") {
       session.mpegts = player;
       player.attachMediaElement(session.media);
       player.load();
-      player.on(window.mpegts.Events.ERROR, () => advanceWebCandidate(session, "O fluxo TS não respondeu nesta rota."));
+      player.on(window.mpegts.Events.ERROR, () => {
+        if (session.networkRetries < 2) {
+          session.networkRetries += 1;
+          retryWebCandidate(session, "O fluxo TS oscilou. Reconectando na mesma rota…", { preserveNetworkRetries: true });
+          return;
+        }
+        advanceWebCandidate(session, "O fluxo TS não respondeu nesta rota.");
+      });
       if (window.mpegts.Events.STATISTICS_INFO) {
         player.on(window.mpegts.Events.STATISTICS_INFO, (info) => {
           const totalFrames = Number(info?.decodedFrames);
@@ -1173,7 +1184,8 @@ function startWebPlayback(media, item, { preview = false } = {}) {
     lastDataAt: Date.now(),
     networkRetries: 0,
     mediaRetries: 0,
-    stallRetries: 0
+    stallRetries: 0,
+    routeRounds: 0
   };
   const listen = (name, handler) => { media.addEventListener(name, handler); session.listeners.push([name, handler]); };
   listen("playing", () => {
@@ -1200,13 +1212,14 @@ function startWebPlayback(media, item, { preview = false } = {}) {
   session.watchdog = setInterval(() => {
     if (session.destroyed || session.switching || media.paused || document.hidden) return;
     const now = Date.now();
-    const haveFutureData = Number(media.readyState) >= 3 || bufferedAhead(media) > 1.25;
+    const recentProgress = now - session.lastProgressAt <= 12_000;
+    const haveFutureData = recentProgress && (Number(media.readyState) >= 3 || bufferedAhead(media) > 1.25);
     if (haveFutureData) {
       session.starvedAt = 0;
       return;
     }
     if (!session.starvedAt && now - session.lastProgressAt > 12_000) session.starvedAt = now;
-    const starvationLimit = preview ? 28_000 : 35_000;
+    const starvationLimit = preview ? 45_000 : 60_000;
     if (!session.starvedAt || now - session.starvedAt <= starvationLimit) return;
     if (session.stallRetries < 1) {
       session.stallRetries += 1;
