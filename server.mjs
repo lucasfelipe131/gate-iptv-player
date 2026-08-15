@@ -1,19 +1,38 @@
 import dns from "node:dns/promises";
 import crypto from "node:crypto";
+import http from "node:http";
+import https from "node:https";
 import net from "node:net";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import express from "express";
 import helmet from "helmet";
+import { createQrSvgDataUrl } from "./lib/qr-data-url.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const port = Number(process.env.PORT || 3000);
-const APP_VERSION = "0.5.3";
+const APP_VERSION = "0.6.0";
 const MAX_CATALOG_ITEMS = 2000;
 const MAX_LIVE_ITEMS = 6000;
 const SESSION_TTL = 24 * 60 * 60 * 1000;
+const PAIRING_SESSION_TTL = Math.min(
+  15 * 60 * 1000,
+  Math.max(50, Number(process.env.PAIRING_SESSION_TTL_MS) || 5 * 60 * 1000)
+);
+const PAIRING_TOMBSTONE_TTL = 10 * 60 * 1000;
+const PAIRING_CODE_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
+const PAIRING_ENCRYPTION_KEY = crypto.randomBytes(32);
+const IMA_SDK_URL = "https://imasdk.googleapis.com/js/sdkloader/ima3.js";
+const ANNUAL_PLAN = Object.freeze({
+  id: "gate-tv-annual",
+  name: "GATE TV — assinatura anual",
+  amount: 30,
+  currency: "BRL",
+  interval: "year",
+  intervalCount: 1
+});
 
 app.disable("x-powered-by");
 app.set("trust proxy", 1);
@@ -21,12 +40,13 @@ app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      scriptSrc: ["'self'"],
+      scriptSrc: ["'self'", "https://imasdk.googleapis.com"],
       styleSrc: ["'self'"],
       imgSrc: ["'self'", "data:", "blob:", "https:", "http:"],
       mediaSrc: ["'self'", "blob:", "https:", "http:"],
       connectSrc: ["'self'", "https:", "http:", "blob:"],
       fontSrc: ["'self'"],
+      frameSrc: ["'self'", "https://imasdk.googleapis.com", "https://*.doubleclick.net", "https://*.googlesyndication.com"],
       objectSrc: ["'none'"],
       frameAncestors: ["'none'"]
     }
@@ -36,6 +56,7 @@ app.use(helmet({
 app.use(express.json({ limit: "2mb" }));
 
 const requestBuckets = new Map();
+const sensitiveRequestBuckets = new Map();
 app.use("/api", (req, res, next) => {
   const now = Date.now();
   const streamRequest = req.path.startsWith("/stream/");
@@ -47,6 +68,33 @@ app.use("/api", (req, res, next) => {
   requestBuckets.set(key, recent);
   next();
 });
+
+function positiveIntegerSetting(name, fallback) {
+  const value = Number(process.env[name]);
+  return Number.isSafeInteger(value) && value > 0 ? value : fallback;
+}
+
+function sensitiveRateLimit(scope, fallbackLimit, windowMs) {
+  return (req, res, next) => {
+    const now = Date.now();
+    const key = `${scope}:${req.ip || "unknown"}`;
+    const limit = positiveIntegerSetting(`RATE_LIMIT_${scope.toUpperCase()}`, fallbackLimit);
+    const recent = (sensitiveRequestBuckets.get(key) || []).filter((time) => now - time < windowMs);
+    if (recent.length >= limit) {
+      const retryAfterSeconds = Math.max(1, Math.ceil((windowMs - (now - recent[0])) / 1000));
+      res.setHeader("retry-after", String(retryAfterSeconds));
+      res.setHeader("cache-control", "no-store");
+      return res.status(429).json({
+        error: "Muitas tentativas. Aguarde antes de tentar novamente.",
+        code: "RATE_LIMITED",
+        retryAfterSeconds
+      });
+    }
+    recent.push(now);
+    sensitiveRequestBuckets.set(key, recent);
+    return next();
+  };
+}
 
 function isPrivateIp(address) {
   const value = address.toLowerCase().replace(/^::ffff:/, "");
@@ -64,43 +112,99 @@ function isPrivateIp(address) {
     value.startsWith("fea") || value.startsWith("feb");
 }
 
-async function validateRemoteUrl(rawUrl) {
+async function resolveRemoteTarget(rawUrl) {
   let parsed;
   try { parsed = new URL(String(rawUrl || "").trim()); } catch { throw new Error("URL inválida."); }
   if (!["http:", "https:"].includes(parsed.protocol)) throw new Error("Use uma URL HTTP ou HTTPS.");
+  if (parsed.username || parsed.password) throw new Error("Não inclua credenciais no endereço da fonte.");
   const host = parsed.hostname.toLowerCase();
   if (!host || host === "localhost" || host.endsWith(".local") || host.endsWith(".internal")) {
     throw new Error("Endereço local não permitido.");
   }
-  const records = await dns.lookup(host, { all: true });
+  const records = await dns.lookup(host, { all: true, verbatim: true });
   if (!records.length || records.some(({ address }) => isPrivateIp(address))) {
     throw new Error("Endereço de rede privada não permitido.");
   }
-  return parsed;
+  const selected = records.find(({ family }) => family === 4) || records[0];
+  return { parsed, address: selected.address, family: selected.family };
+}
+
+async function validateRemoteUrl(rawUrl) {
+  return (await resolveRemoteTarget(rawUrl)).parsed;
+}
+
+function requestPinnedRemote(target, headers, timeoutMs) {
+  const { parsed, address, family } = target;
+  const transport = parsed.protocol === "https:" ? https : http;
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finishError = (error) => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    };
+    const request = transport.request({
+      protocol: parsed.protocol,
+      hostname: address,
+      family,
+      port: parsed.port ? Number(parsed.port) : undefined,
+      path: `${parsed.pathname}${parsed.search}`,
+      method: "GET",
+      servername: parsed.protocol === "https:" && !net.isIP(parsed.hostname) ? parsed.hostname : undefined,
+      headers: {
+        "user-agent": `GATE-IPTV-PLAYER/${APP_VERSION}`,
+        "accept-encoding": "identity",
+        ...headers,
+        host: parsed.host
+      }
+    }, (nodeResponse) => {
+      if (settled) {
+        nodeResponse.destroy();
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      const responseHeaders = new Headers();
+      for (const [name, rawValue] of Object.entries(nodeResponse.headers)) {
+        if (Array.isArray(rawValue)) rawValue.forEach((value) => responseHeaders.append(name, value));
+        else if (rawValue != null) responseHeaders.set(name, String(rawValue));
+      }
+      const status = Number(nodeResponse.statusCode || 502);
+      const noBody = status === 204 || status === 205 || status === 304;
+      if (noBody) nodeResponse.resume();
+      const body = noBody ? null : Readable.toWeb(nodeResponse);
+      resolve(new Response(body, {
+        status,
+        statusText: nodeResponse.statusMessage || "",
+        headers: responseHeaders
+      }));
+    });
+    const timer = setTimeout(() => {
+      request.destroy(Object.assign(new Error("REMOTE_TIMEOUT"), { code: "REMOTE_TIMEOUT" }));
+    }, Math.min(60_000, Math.max(1_000, Number(timeoutMs) || 20_000)));
+    request.once("error", (error) => {
+      clearTimeout(timer);
+      finishError(error);
+    });
+    request.end();
+  });
 }
 
 async function openRemote(rawUrl, { headers = {}, timeoutMs = 20_000 } = {}) {
-  let current = await validateRemoteUrl(rawUrl);
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let target = await resolveRemoteTarget(rawUrl);
   try {
     for (let redirect = 0; redirect < 5; redirect += 1) {
-      const response = await fetch(current, {
-        redirect: "manual",
-        headers: { "user-agent": `GATE-IPTV-PLAYER/${APP_VERSION}`, ...headers },
-        signal: controller.signal
-      });
+      const response = await requestPinnedRemote(target, headers, timeoutMs);
       if (response.status >= 300 && response.status < 400 && response.headers.get("location")) {
         response.body?.cancel().catch(() => {});
-        current = await validateRemoteUrl(new URL(response.headers.get("location"), current).toString());
+        target = await resolveRemoteTarget(new URL(response.headers.get("location"), target.parsed).toString());
         continue;
       }
-      return { response, finalUrl: current, clearTimer: () => clearTimeout(timer) };
+      return { response, finalUrl: target.parsed, clearTimer: () => {} };
     }
     throw new Error("A fonte realizou redirecionamentos demais.");
   } catch (error) {
-    clearTimeout(timer);
-    if (error?.name === "AbortError" || error?.name === "TimeoutError") {
+    if (error?.code === "REMOTE_TIMEOUT" || error?.name === "AbortError" || error?.name === "TimeoutError") {
       throw new Error("A fonte demorou demais para responder.");
     }
     throw error;
@@ -159,6 +263,97 @@ function safeText(value, maxLength = 1200) {
     .slice(0, maxLength);
 }
 
+function normalizeHttpUrl(value, { maxLength = 4096, requireHttps = false } = {}) {
+  const text = String(value || "").trim();
+  if (!text || text.length > maxLength) throw new Error("Informe uma URL válida.");
+  let parsed;
+  try { parsed = new URL(text); } catch { throw new Error("Informe uma URL válida."); }
+  if (requireHttps ? parsed.protocol !== "https:" : !["http:", "https:"].includes(parsed.protocol)) {
+    throw new Error(requireHttps ? "O endereço de pagamento deve usar HTTPS." : "Use uma URL HTTP ou HTTPS.");
+  }
+  if (!parsed.hostname) throw new Error("Informe uma URL válida.");
+  parsed.hash = "";
+  return parsed.toString();
+}
+
+function normalizePairingCode(value) {
+  const compact = String(value || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (compact.length !== 8 || [...compact].some((character) => !PAIRING_CODE_ALPHABET.includes(character))) {
+    throw new Error("Código de pareamento inválido.");
+  }
+  return `${compact.slice(0, 4)}-${compact.slice(4)}`;
+}
+
+function newPairingCode() {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const bytes = crypto.randomBytes(8);
+    const compact = [...bytes].map((byte) => PAIRING_CODE_ALPHABET[byte % PAIRING_CODE_ALPHABET.length]).join("");
+    const code = `${compact.slice(0, 4)}-${compact.slice(4)}`;
+    if (!pairingSessions.has(code)) return code;
+  }
+  throw new Error("Não foi possível gerar um código de pareamento. Tente novamente.");
+}
+
+function hashDeviceToken(token) {
+  return crypto.createHash("sha256").update(String(token || ""), "utf8").digest();
+}
+
+function verifyDeviceToken(entry, token) {
+  if (!entry?.deviceTokenHash || typeof token !== "string" || token.length < 32 || token.length > 200) return false;
+  const candidate = hashDeviceToken(token);
+  return candidate.length === entry.deviceTokenHash.length && crypto.timingSafeEqual(candidate, entry.deviceTokenHash);
+}
+
+function encryptPairingDescriptor(descriptor) {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv("aes-256-gcm", PAIRING_ENCRYPTION_KEY, iv);
+  const ciphertext = Buffer.concat([cipher.update(JSON.stringify(descriptor), "utf8"), cipher.final()]);
+  return { iv, ciphertext, authenticationTag: cipher.getAuthTag() };
+}
+
+function decryptPairingDescriptor(encrypted) {
+  const decipher = crypto.createDecipheriv("aes-256-gcm", PAIRING_ENCRYPTION_KEY, encrypted.iv);
+  decipher.setAuthTag(encrypted.authenticationTag);
+  return JSON.parse(Buffer.concat([decipher.update(encrypted.ciphertext), decipher.final()]).toString("utf8"));
+}
+
+function normalizePairingDescriptor(input) {
+  const value = input && typeof input === "object" ? input : {};
+  const type = String(value.type || value.kind || "").trim().toLowerCase();
+  const name = safeLabel(value.name || value.label || (type === "xtream" ? "Lista Xtream" : "Lista M3U"));
+  if (type === "xtream") {
+    const rawServerUrl = String(value.serverUrl || value.server || "").trim();
+    if (!rawServerUrl || rawServerUrl.length > 2048) throw new Error("Informe o endereço do servidor Xtream.");
+    let inputUrl = rawServerUrl;
+    if (inputUrl.startsWith("//")) inputUrl = `http:${inputUrl}`;
+    else if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(inputUrl)) inputUrl = `http://${inputUrl}`;
+    const parsed = new URL(normalizeHttpUrl(inputUrl, { maxLength: 2048 }));
+    const embeddedUsername = parsed.searchParams.get("username") || parsed.searchParams.get("user") || "";
+    const embeddedPassword = parsed.searchParams.get("password") || parsed.searchParams.get("pass") || "";
+    const username = String(value.username || embeddedUsername || "").trim();
+    const password = String(value.password || embeddedPassword || "");
+    if (!username || !password || username.length > 512 || password.length > 512) {
+      throw new Error("Informe usuário e senha da lista Xtream.");
+    }
+    parsed.username = "";
+    parsed.password = "";
+    parsed.pathname = parsed.pathname.replace(/\/(?:player_api|panel_api|get|xmltv)\.php\/?$/i, "").replace(/\/+$/, "");
+    parsed.search = "";
+    return {
+      type: "xtream",
+      name,
+      serverUrl: parsed.toString().replace(/\/$/, ""),
+      username,
+      password
+    };
+  }
+  if (type === "m3u" || type === "playlist") {
+    const url = normalizeHttpUrl(value.url || value.m3uUrl, { maxLength: 4096 });
+    return { type: "m3u", name, url };
+  }
+  throw new Error("Escolha uma lista Xtream ou M3U.");
+}
+
 function parseXtreamServer(value) {
   let input = String(value || "").trim();
   if (!input) throw new Error("Informe o endereço do servidor.");
@@ -180,6 +375,7 @@ function normalizeBaseUrl(value) {
 const streamTickets = new Map();
 const streamTicketByUrl = new Map();
 const xtreamSessions = new Map();
+const pairingSessions = new Map();
 
 function registerStream(remoteUrl, kind = "media") {
   const url = String(remoteUrl || "").trim();
@@ -189,10 +385,28 @@ function registerStream(remoteUrl, kind = "media") {
   const existing = existingToken && streamTickets.get(existingToken);
   if (existing && existing.expiresAt > Date.now()) return `/api/stream/${existingToken}`;
   const token = crypto.randomBytes(18).toString("base64url");
-  const entry = { url, kind, ticketKey, expiresAt: Date.now() + SESSION_TTL };
+  const now = Date.now();
+  const entry = { url, kind, ticketKey, createdAt: now, lastAccessAt: now, expiresAt: now + SESSION_TTL };
   streamTickets.set(token, entry);
   streamTicketByUrl.set(ticketKey, token);
   return `/api/stream/${token}`;
+}
+
+function activeStreamTicket(token) {
+  const entry = streamTickets.get(String(token || ""));
+  if (!entry || entry.expiresAt <= Date.now()) return null;
+  entry.lastAccessAt = Date.now();
+  entry.expiresAt = entry.lastAccessAt + SESSION_TTL;
+  return entry;
+}
+
+function streamTicketResponse(token, entry) {
+  return {
+    playUrl: `/api/stream/${token}`,
+    streamType: streamTypeFor(entry.url),
+    expiresAt: new Date(entry.expiresAt).toISOString(),
+    expiresInSeconds: Math.floor(SESSION_TTL / 1000)
+  };
 }
 
 function imageContentType(rawUrl, reportedType = "") {
@@ -413,8 +627,231 @@ function rewriteManifest(text, baseUrl) {
   }).join("\n");
 }
 
+function expirePairingSession(entry, now = Date.now()) {
+  if (!["consumed", "expired"].includes(entry.status) && entry.expiresAt <= now) {
+    entry.status = "expired";
+    entry.encryptedDescriptor = null;
+    entry.descriptorType = null;
+    entry.deviceTokenHash = null;
+    entry.purgeAt = now + PAIRING_TOMBSTONE_TTL;
+  }
+  return entry;
+}
+
+function publicPairingSession(entry) {
+  expirePairingSession(entry);
+  return {
+    code: entry.code,
+    status: entry.status,
+    expiresAt: new Date(entry.expiresAt).toISOString(),
+    ...(entry.descriptorType ? { descriptorType: entry.descriptorType } : {}),
+    ...(entry.submittedAt ? { submittedAt: new Date(entry.submittedAt).toISOString() } : {}),
+    ...(entry.consumedAt ? { consumedAt: new Date(entry.consumedAt).toISOString() } : {})
+  };
+}
+
+function pairingBaseUrl(req) {
+  const production = String(process.env.NODE_ENV || "").toLowerCase() === "production";
+  const configured = String(process.env.PUBLIC_APP_URL || (!production ? process.env.APP_URL : "") || "").trim();
+  if (configured) {
+    try {
+      return normalizeHttpUrl(configured, { maxLength: 2048, requireHttps: production }).replace(/\/$/, "");
+    } catch {
+      throw new Error("PUBLIC_APP_URL inválida para o pareamento.");
+    }
+  }
+  if (production) throw new Error("Configure PUBLIC_APP_URL com a origem HTTPS pública do aplicativo.");
+  const host = String(req.get("host") || "").replace(/[\r\n]/g, "");
+  if (!host) throw new Error("Não foi possível determinar o endereço público do aplicativo.");
+  if (/[\s/@\\?#]/.test(host)) throw new Error("Host local inválido para o pareamento.");
+  let origin;
+  try { origin = new URL(`${req.protocol}://${host}`); }
+  catch { throw new Error("Host local inválido para o pareamento."); }
+  const hostname = origin.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  const localHostname = hostname === "localhost" || hostname.endsWith(".localhost");
+  const localAddress = net.isIP(hostname) > 0 && isPrivateIp(hostname);
+  if (!localHostname && !localAddress) {
+    throw new Error("Configure PUBLIC_APP_URL para gerar links de pareamento fora do ambiente local.");
+  }
+  return origin.origin;
+}
+
+function configuredPaymentLink() {
+  try {
+    return process.env.PAYMENT_LINK_URL
+      ? normalizeHttpUrl(process.env.PAYMENT_LINK_URL, { maxLength: 4096, requireHttps: true })
+      : null;
+  } catch { return null; }
+}
+
+function configuredVastAdTagUrl() {
+  const rawUrl = String(process.env.VAST_AD_TAG_URL || "").trim();
+  if (!rawUrl) return null;
+  try {
+    const normalized = normalizeHttpUrl(rawUrl, { maxLength: 8192, requireHttps: true });
+    const parsed = new URL(normalized);
+    if (parsed.username || parsed.password) return null;
+    return parsed.toString();
+  } catch { return null; }
+}
+
+function advertisingConfiguration() {
+  const vastAdTagUrl = configuredVastAdTagUrl();
+  const enabled = Boolean(vastAdTagUrl);
+  return {
+    enabled,
+    mode: enabled ? "vast" : "house",
+    provider: enabled ? "google-ima" : null,
+    sdkUrl: enabled ? IMA_SDK_URL : null,
+    vastAdTagUrl,
+    loadTimeoutMs: 7_000,
+    maxPlaybackSeconds: 45,
+    fallback: "house",
+    houseAd: { enabled: true, durationSeconds: 10 }
+  };
+}
+
+function billingConfiguration() {
+  const mercadoPago = Boolean(String(process.env.MERCADOPAGO_ACCESS_TOKEN || "").trim());
+  const paymentLink = configuredPaymentLink();
+  const providerConfigured = mercadoPago || Boolean(paymentLink);
+  return {
+    checkoutAvailable: false,
+    activationReady: false,
+    providerConfigured,
+    provider: providerConfigured ? "activation_pending" : "unconfigured"
+  };
+}
+
+function respondWithCheckout(_req, res) {
+  res.setHeader("cache-control", "no-store");
+  const configuration = billingConfiguration();
+  return res.status(503).json({
+    status: "payment_not_configured",
+    code: configuration.providerConfigured ? "ACTIVATION_PIPELINE_REQUIRED" : "PAYMENT_NOT_CONFIGURED",
+    error: configuration.providerConfigured
+      ? "A cobrança está bloqueada até a confirmação autenticada e a ativação persistente da licença estarem concluídas."
+      : "A cobrança ainda não foi configurada.",
+    plan: ANNUAL_PLAN
+  });
+}
+
 app.get("/health", (_req, res) => res.json({ ok: true, service: "gate-iptv-player", version: APP_VERSION }));
-app.get("/api/config", (_req, res) => res.json({ annualPrice: 30, adDurationSeconds: 10, paymentAvailable: Boolean(process.env.PAYMENT_LINK_URL) }));
+app.get("/api/config", (_req, res) => {
+  const billing = billingConfiguration();
+  const ads = advertisingConfiguration();
+  return res.json({
+    annualPrice: ANNUAL_PLAN.amount,
+    currency: ANNUAL_PLAN.currency,
+    adDurationSeconds: ads.houseAd.durationSeconds,
+    ads,
+    paymentAvailable: billing.checkoutAvailable,
+    subscription: ANNUAL_PLAN,
+    billing
+  });
+});
+app.get("/api/billing/config", (_req, res) => res.json({ plan: ANNUAL_PLAN, ...billingConfiguration() }));
+
+app.post("/api/pairing/sessions", sensitiveRateLimit("pairing_create", 12, 60_000), (req, res) => {
+  try {
+    const now = Date.now();
+    const code = newPairingCode();
+    const deviceToken = crypto.randomBytes(32).toString("base64url");
+    const entry = {
+      code,
+      status: "pending",
+      encryptedDescriptor: null,
+      descriptorType: null,
+      deviceTokenHash: hashDeviceToken(deviceToken),
+      createdAt: now,
+      expiresAt: now + PAIRING_SESSION_TTL,
+      purgeAt: now + PAIRING_SESSION_TTL + PAIRING_TOMBSTONE_TTL
+    };
+    pairingSessions.set(code, entry);
+    const pairUrl = new URL("/pair", `${pairingBaseUrl(req)}/`);
+    pairUrl.searchParams.set("code", code);
+    const qrDataUrl = createQrSvgDataUrl(pairUrl.toString());
+    res.setHeader("cache-control", "no-store");
+    return res.status(201).json({
+      ...publicPairingSession(entry),
+      deviceToken,
+      pairUrl: pairUrl.toString(),
+      qrTargetUrl: pairUrl.toString(),
+      qrDataUrl,
+      statusUrl: `/api/pairing/${encodeURIComponent(code)}`,
+      submitUrl: `/api/pairing/${encodeURIComponent(code)}`,
+      consumeUrl: `/api/pairing/${encodeURIComponent(code)}/consume`,
+      expiresInSeconds: Math.ceil(PAIRING_SESSION_TTL / 1000)
+    });
+  } catch {
+    return res.status(500).json({ error: "Não foi possível iniciar o pareamento." });
+  }
+});
+
+app.get("/api/pairing/:code", sensitiveRateLimit("pairing_lookup", 60, 60_000), (req, res) => {
+  let code;
+  try { code = normalizePairingCode(req.params.code); }
+  catch (error) { return res.status(400).json({ error: error.message, code: "INVALID_PAIRING_CODE" }); }
+  const entry = pairingSessions.get(code);
+  if (!entry) return res.status(404).json({ error: "Código de pareamento não encontrado.", code: "PAIRING_NOT_FOUND" });
+  res.setHeader("cache-control", "no-store");
+  return res.json(publicPairingSession(entry));
+});
+
+app.put("/api/pairing/:code", sensitiveRateLimit("pairing_submit", 8, 10 * 60_000), (req, res) => {
+  let code;
+  try { code = normalizePairingCode(req.params.code); }
+  catch (error) { return res.status(400).json({ error: error.message, code: "INVALID_PAIRING_CODE" }); }
+  const entry = pairingSessions.get(code);
+  if (!entry) return res.status(404).json({ error: "Código de pareamento não encontrado.", code: "PAIRING_NOT_FOUND" });
+  expirePairingSession(entry);
+  if (entry.status === "expired") return res.status(410).json({ error: "Este código expirou. Gere um novo código na TV.", code: "PAIRING_EXPIRED" });
+  if (entry.status === "consumed") return res.status(410).json({ error: "Este código já foi consumido.", code: "PAIRING_CONSUMED" });
+  if (entry.status === "ready") return res.status(409).json({ error: "Uma lista já foi enviada para este código.", code: "PAIRING_ALREADY_SUBMITTED" });
+  try {
+    const descriptor = normalizePairingDescriptor(req.body?.descriptor || req.body);
+    entry.encryptedDescriptor = encryptPairingDescriptor(descriptor);
+    entry.descriptorType = descriptor.type;
+    entry.status = "ready";
+    entry.submittedAt = Date.now();
+    res.setHeader("cache-control", "no-store");
+    return res.status(202).json(publicPairingSession(entry));
+  } catch (error) {
+    return res.status(422).json({ error: error.message || "Os dados da lista são inválidos.", code: "INVALID_PLAYLIST_DESCRIPTOR" });
+  }
+});
+
+app.post("/api/pairing/:code/consume", sensitiveRateLimit("pairing_consume", 30, 60_000), (req, res) => {
+  let code;
+  try { code = normalizePairingCode(req.params.code); }
+  catch (error) { return res.status(400).json({ error: error.message, code: "INVALID_PAIRING_CODE" }); }
+  const entry = pairingSessions.get(code);
+  if (!entry) return res.status(404).json({ error: "Código de pareamento não encontrado.", code: "PAIRING_NOT_FOUND" });
+  expirePairingSession(entry);
+  if (entry.status === "expired") return res.status(410).json({ error: "Este código expirou. Gere um novo código na TV.", code: "PAIRING_EXPIRED" });
+  if (entry.status === "consumed") return res.status(410).json({ error: "Os dados deste pareamento já foram consumidos.", code: "PAIRING_CONSUMED" });
+  const authorization = String(req.get("authorization") || "");
+  const token = authorization.match(/^Bearer\s+(.+)$/i)?.[1] || "";
+  if (!verifyDeviceToken(entry, token)) {
+    return res.status(401).json({ error: "Token do dispositivo inválido.", code: "INVALID_DEVICE_TOKEN" });
+  }
+  if (entry.status !== "ready" || !entry.encryptedDescriptor) {
+    return res.status(409).json({ error: "A lista ainda não foi enviada pelo celular.", code: "PAIRING_NOT_READY" });
+  }
+  let descriptor;
+  try { descriptor = decryptPairingDescriptor(entry.encryptedDescriptor); }
+  catch { return res.status(500).json({ error: "Não foi possível recuperar os dados pareados.", code: "PAIRING_DATA_UNAVAILABLE" }); }
+  entry.encryptedDescriptor = null;
+  entry.descriptorType = null;
+  entry.deviceTokenHash = null;
+  entry.status = "consumed";
+  entry.consumedAt = Date.now();
+  entry.purgeAt = entry.consumedAt + PAIRING_TOMBSTONE_TTL;
+  res.setHeader("cache-control", "no-store");
+  return res.json({ code, status: "consumed", consumedAt: new Date(entry.consumedAt).toISOString(), descriptor });
+});
+
+app.post("/api/billing/checkout", sensitiveRateLimit("billing_checkout", 10, 10 * 60_000), (req, res) => respondWithCheckout(req, res));
 
 app.post("/api/m3u/parse", async (req, res) => {
   try {
@@ -622,10 +1059,17 @@ app.post("/api/stream/register", async (req, res) => {
   }
 });
 
+app.post("/api/stream/:token/refresh", (req, res) => {
+  const entry = activeStreamTicket(req.params.token);
+  if (!entry) return res.status(404).json({ error: "Este link de reprodução expirou. Conecte a lista novamente." });
+  res.setHeader("cache-control", "private, no-store");
+  return res.json(streamTicketResponse(req.params.token, entry));
+});
+
 app.get("/api/stream/:token", async (req, res) => {
-  const entry = streamTickets.get(req.params.token);
-  if (!entry || entry.expiresAt <= Date.now()) return res.status(404).json({ error: "Este link de reprodução expirou. Conecte a lista novamente." });
-  entry.expiresAt = Date.now() + SESSION_TTL;
+  const entry = activeStreamTicket(req.params.token);
+  if (!entry) return res.status(404).json({ error: "Este link de reprodução expirou. Conecte a lista novamente." });
+  res.setHeader("x-gate-ticket-expires-at", new Date(entry.expiresAt).toISOString());
   const nativeClient = /GATE-TV-NATIVE/i.test(String(req.headers["user-agent"] || ""));
   if (entry.kind !== "image" && (nativeClient || req.query.direct === "1")) {
     res.setHeader("cache-control", "private, no-store");
@@ -696,14 +1140,12 @@ app.post("/api/portal/validate", async (req, res) => {
   }
 });
 
-app.post("/api/renewals", (req, res) => {
+app.post("/api/renewals", sensitiveRateLimit("billing_checkout", 10, 10 * 60_000), (req, res) => {
   const rawMac = String(req.body?.mac || "").trim().toUpperCase();
   const compact = rawMac.replace(/[^0-9A-F]/g, "");
   if (!/^[0-9A-F]{12}$/.test(compact)) return res.status(400).json({ error: "Informe um MAC com 12 caracteres hexadecimais." });
   const mac = compact.match(/.{2}/g).join(":");
-  const protocol = `GATE-${new Date().toISOString().slice(0, 10).replaceAll("-", "")}-${crypto.randomBytes(3).toString("hex").toUpperCase()}`;
-  const checkoutUrl = process.env.PAYMENT_LINK_URL || null;
-  return res.status(201).json({ protocol, mac, plan: "Sem anúncios — 1 ano", amount: 30, checkoutUrl, status: checkoutUrl ? "ready_for_payment" : "awaiting_payment_configuration" });
+  return respondWithCheckout(req, res, { mac });
 });
 
 setInterval(() => {
@@ -712,7 +1154,12 @@ setInterval(() => {
     if (entry.expiresAt <= now) { streamTickets.delete(token); streamTicketByUrl.delete(entry.ticketKey || `media:${entry.url}`); }
   }
   for (const [id, session] of xtreamSessions) if (session.expiresAt <= now) xtreamSessions.delete(id);
+  for (const [code, entry] of pairingSessions) {
+    expirePairingSession(entry, now);
+    if (entry.purgeAt <= now) pairingSessions.delete(code);
+  }
   for (const [key, times] of requestBuckets) if (!times.some((time) => now - time < 60_000)) requestBuckets.delete(key);
+  for (const [key, times] of sensitiveRequestBuckets) if (!times.some((time) => now - time < 10 * 60_000)) sensitiveRequestBuckets.delete(key);
 }, 10 * 60 * 1000).unref();
 
 app.use("/vendor/hls.min.js", express.static(path.join(__dirname, "node_modules/hls.js/dist/hls.min.js")));
@@ -728,4 +1175,7 @@ app.use(express.static(path.join(__dirname, "public"), {
 app.get("/{*path}", (_req, res) => res.sendFile(path.join(__dirname, "public/index.html")));
 app.use((error, _req, res, _next) => res.status(500).json({ error: error?.message || "Erro interno." }));
 
-app.listen(port, "0.0.0.0", () => console.log(`GATE IPTV PLAYER online na porta ${port}`));
+const isMainModule = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (isMainModule) app.listen(port, "0.0.0.0", () => console.log(`GATE IPTV PLAYER online na porta ${port}`));
+
+export { app };

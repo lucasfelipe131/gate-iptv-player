@@ -1,0 +1,11 @@
+{
+  "name": "@gate-tv/web",
+  "version": "0.6.0",
+  "private": true,
+  "description": "Entrada do produto Web/PWA do GATE TV.",
+  "scripts": {
+    "dev": "npm --prefix ../.. run dev",
+    "start": "npm --prefix ../.. start",
+    "test": "npm --prefix ../.. test"
+  }
+}

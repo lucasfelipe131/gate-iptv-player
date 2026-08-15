@@ -1,69 +1,121 @@
-# GATE TV
+# GATE TV 0.6.0
 
-Player híbrido web/PWA e Android TV para navegadores, BlueStacks e Smart TVs. O aplicativo não fornece conteúdo: cada usuário conecta apenas fontes e listas que tenha autorização para utilizar.
+Player multiplataforma para listas e fontes de mídia autorizadas. O GATE TV não
+fornece, hospeda ou vende canais, filmes, séries ou credenciais.
 
-## Recursos da versão 0.5.1
+## Produtos
 
-- conexão Xtream Codes e listas M3U/M3U8 por URL ou arquivo local;
-- reconexão automática no mesmo aparelho, com os dados salvos apenas localmente;
-- favoritos persistentes para canais, filmes e séries;
-- interface de 10 pés e navegação por setas, OK/Enter, Voltar/Escape e tecla verde;
-- cards com capas, sinopses, programação e fallback visual;
-- prévia no primeiro clique e tela cheia no segundo, sem criar reproduções duplicadas;
-- navegador com HLS.js para HLS e mpegts.js para MPEG-TS;
-- Android com LibVLC como motor principal e Media3/ExoPlayer como fallback;
-- tentativa direta no provedor antes do proxy Railway, com troca automática de rota e formato em caso de falha;
-- recuperação de travamentos, reconexão, redução de latência ao vivo e limpeza de buffers;
-- layout adaptável a HD, Full HD, 4K, mouse, toque e controle remoto;
-- validação de Portal/Ministra por URL e MAC;
-- PWA instalável e pacote LG webOS Hosted Web App em `platforms/lg-webos`.
+| Produto | Subprojeto | Motor de reprodução |
+|---|---|---|
+| Web/PWA | `platforms/web` + `public` | HLS.js, mpegts.js e vídeo HTML5 |
+| Android e Android TV | `platforms/android-native` | Media3/ExoPlayer, com LibVLC como último fallback |
+| LG webOS TV | `platforms/webos` | vídeo webOS com watchdog e recuperação |
+| Samsung Tizen | `platforms/tizen` | AVPlay nativo com watchdog e recuperação |
 
-## Executar localmente
+Todos consomem a mesma API em `server.mjs`, mas têm manifesto, ciclo de vida,
+empacotamento e recuperação próprios. O diretório antigo `platforms/lg-webos`
+mantém apenas assets e material de loja usados pelo empacotamento; o cliente LG
+ativo é `platforms/webos`.
+
+## O que mudou nesta versão
+
+- recuperação da queda silenciosa que ocorria em torno de cinco minutos;
+- detecção por relógio, buffer, fim inesperado e frames realmente renderizados;
+- reconexão do mesmo canal com backoff, limite de tentativas e isolamento por sessão;
+- buffers menores para evitar pressão de memória em TVs com pouca RAM;
+- renovação segura do ticket de stream, com validade deslizante de 24 horas;
+- pareamento da lista por QR Code e código temporário de uso único;
+- página profissional de assinatura anual em `/assinar`;
+- página de assinatura pronta, com cobrança bloqueada até existir ativação persistente;
+- interface reorganizada para controle remoto, toque e navegador;
+- preparação para anúncios VAST/Google IMA, desativados até receber uma tag real.
+
+## Executar e testar
+
+Requer Node.js 20 ou superior.
 
 ```bash
-npm install
+npm ci
+npm test
 npm start
 ```
 
-Acesse `http://localhost:3000`.
+Abra `http://localhost:3000`. O teste automatizado inclui o cenário de 300
+segundos de reprodução seguido por encerramento do servidor e confirma que o
+mesmo canal é reaberto sem intervenção do usuário.
 
-Para executar os testes:
+Copie `.env.example` somente como referência e cadastre os valores reais no
+provedor de deploy; nunca versione tokens ou credenciais.
 
-```bash
-npm test
-```
+## Pareamento por QR
 
-## APK Android TV e BlueStacks
+A TV cria uma sessão de cinco minutos e exibe um QR. O celular envia um
+descriptor Xtream ou M3U cifrado; somente o dispositivo que possui o token
+secreto pode consumi-lo, e isso ocorre uma única vez. Usuário e senha não são
+expostos na consulta pública de status.
 
-O projeto nativo está em `platforms/android-native`. Cada atualização relevante da branch `main` executa os testes web, o lint Android e gera o APK de depuração no GitHub Actions.
+O armazenamento de pareamento atual é cifrado e mantido em memória. Em uma
+implantação com mais de uma réplica, substitua-o por Redis ou Postgres
+compartilhado antes de habilitar escala horizontal.
 
-Para compilar localmente com Android SDK e Java 17 configurados:
+## Cobrança anual
+
+O plano é fixado pelo servidor em **R$ 30 por ano** e cobre a licença do
+aplicativo, não conteúdo. A tela está pronta, mas o backend mantém o checkout
+bloqueado até existir webhook autenticado e armazenamento persistente de
+licenças; assim o sistema nunca recebe dinheiro sem conseguir ativar o aparelho.
+As variáveis reservadas para a próxima etapa são:
+
+- `MERCADOPAGO_ACCESS_TOKEN`: credencial futura do Checkout Pro;
+- `PAYMENT_LINK_URL`: fallback HTTPS futuro;
+- `PAYMENT_RETURN_URL`: origem HTTPS das páginas de retorno;
+- `PUBLIC_APP_URL`: origem pública usada no QR e em links absolutos.
+
+Mesmo com essas variáveis, a versão 0.6.0 não cria cobrança enquanto a etapa de
+entitlement estiver pendente. Uma versão destinada à Google Play deve usar um
+flavor com Google Play Billing conforme a política da loja.
+
+## Anúncios
+
+Use `VAST_AD_TAG_URL` com uma tag HTTPS criada no Google Ad Manager/IMA ou em
+outra plataforma VAST confiável. A tag atende Web, LG webOS e Samsung Tizen;
+Android mantém o anúncio institucional até receber a integração IMA nativa.
+Sem essa variável, nenhum SDK publicitário de terceiros é carregado. Falha,
+timeout ou bloqueio do anúncio nunca impede o canal de iniciar.
+
+Não coloque ID do AdSense de páginas no player: para pré-roll de vídeo em Web e
+TV, o contrato correto é VAST/Google IMA. Credenciais e tags reais não devem ser
+commitidas no repositório.
+
+## Empacotamento
+
+Android/Android TV, com Java 17 e Android SDK:
 
 ```bash
 cd platforms/android-native
-gradle :app:lintDebug :app:assembleDebug
+gradle --no-daemon :app:lintDebug :app:assembleDebug
 ```
 
-O APK usa o catálogo web publicado e entrega a reprodução ao player nativo por uma ponte JavaScript explícita. O mesmo stream é reaproveitado ao alternar entre prévia e tela cheia.
-
-## Variáveis opcionais
-
-- `PORT`: porta do serviço (a Railway define automaticamente).
-- `PAYMENT_LINK_URL`: URL segura do checkout para a assinatura anual. Sem ela, a página cria o protocolo e informa que o pagamento ainda precisa ser configurado.
-
-## Compatibilidade
-
-O player cobre HLS e MPEG-TS nos formatos e codecs aceitos pelo navegador ou pelo dispositivo Android. Nenhum aplicativo consegue garantir listas expiradas, servidores indisponíveis, DRM ou codecs ausentes no hardware; nesses casos o GATE TV apresenta o erro recebido e tenta automaticamente as rotas e os motores compatíveis antes de desistir.
-
-A publicação em lojas exige contas, certificados e revisão separados para Samsung Tizen, LG webOS e Android TV.
-
-## Pacote LG webOS
-
-O projeto LG está em `platforms/lg-webos`. Para gerar o `.ipk` com a CLI oficial:
+LG webOS TV 22+:
 
 ```bash
 npm install -g @webos-tools/cli
-sh scripts/package-webos.sh
+npm run package:webos
 ```
 
-O pacote é um Hosted Web App e abre a versão publicada na Railway. Consulte `platforms/lg-webos/STORE_SUBMISSION.md` para o material e os dados que ainda precisam ser preenchidos no LG Seller Lounge.
+Samsung Tizen 6.5+, com perfil de assinatura criado no Tizen Studio:
+
+```bash
+TIZEN_SECURITY_PROFILE=GateTvSamsung npm run package:tizen
+```
+
+Os pacotes LG e Samsung exigem as CLIs proprietárias e certificados da conta da
+loja. O workflow de Android executa testes, lint, build, verificação da assinatura
+e checksum do APK.
+
+## Limites reais de compatibilidade
+
+Nenhum player corrige uma lista expirada, servidor fora do ar, limite de
+conexões, DRM não autorizado ou codec ausente no hardware. Nesses casos o GATE
+TV preserva o canal selecionado, tenta as rotas e motores compatíveis e apresenta
+um erro recuperável, sem criar loops ou conexões paralelas ilimitadas.

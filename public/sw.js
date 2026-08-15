@@ -1,16 +1,18 @@
-const CACHE = "gate-player-v15-pro-ui";
+const CACHE = "gate-player-v16-stability-pro-ui";
 const ASSETS = [
   "/",
-  "/styles.css?v=0.5.4-ui",
+  "/styles.css?v=0.6.0",
   "/webos.css?v=1.0.2",
   "/pro-ui.css?v=1.0.0",
-  "/app.js?v=0.5.4-ui",
+  "/app.js?v=0.6.0",
+  "/tizen-loader.js?v=0.6.0",
+  "/platform-player.js?v=0.6.0",
   "/webos-remote.js?v=1.0.2",
   "/pro-ui.js?v=1.0.0",
   "/gate-icon.svg",
   "/manifest.webmanifest",
-  "/vendor/hls.min.js?v=0.5.3",
-  "/vendor/mpegts.min.js?v=0.5.3"
+  "/vendor/hls.min.js?v=0.6.0",
+  "/vendor/mpegts.min.js?v=0.6.0"
 ];
 self.addEventListener("install", (event) => event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(ASSETS)).then(() => self.skipWaiting())));
 self.addEventListener("activate", (event) => event.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((key) => key !== CACHE).map((key) => caches.delete(key)))).then(() => self.clients.claim())));
