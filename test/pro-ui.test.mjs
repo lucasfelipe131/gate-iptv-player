@@ -35,7 +35,8 @@ test("exibe orientação contextual sem interferir nos comandos do player", () =
 });
 
 test("service worker publica os novos recursos sem usar o cache antigo", () => {
-  assert.match(serviceWorker, /gate-player-v16-stability-pro-ui/);
+  assert.match(serviceWorker, /gate-player-v17-web-ui-2/);
   assert.match(serviceWorker, /pro-ui\.css\?v=1\.0\.0/);
   assert.match(serviceWorker, /pro-ui\.js\?v=1\.0\.0/);
+  assert.match(serviceWorker, /web-ui\.css\?v=2\.0\.0/);
 });
