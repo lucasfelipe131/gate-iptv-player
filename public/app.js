@@ -201,7 +201,10 @@ function topbar() {
   const connected = state.source ? '<span class="pill connected-pill">● Lista conectada</span>' : '<span class="pill">Nenhuma lista conectada</span>';
   const expiry = state.source ? `<span class="pill expiry-pill">Validade: ${escapeHtml(formatExpiryDate(state.account?.expiresAt))}</span>` : "";
   return `<header class="topbar">
-    <button class="top-brand focusable" data-action="go-home" data-focusable><img src="/gate-icon.svg" alt=""><span><strong>GATE</strong><small>IPTV PLAYER</small></span></button>
+    <div class="topbar-start">
+      <button class="top-brand focusable" data-action="go-home" data-focusable><img src="/gate-icon.svg" alt=""><span><strong>GATE</strong><small>IPTV PLAYER</small></span></button>
+      <div class="web-top-context"><small>GATE PLAYER</small><strong>${state.view === "home" ? "Visão geral" : escapeHtml(titleFor(state.view))}</strong></div>
+    </div>
     <div class="top-actions">${connected}${expiry}<button class="round-action focusable" data-action="open-pairing" data-focusable aria-label="Conectar por QR">${gateIcon("qr")}</button>${state.source ? `<button class="round-action focusable" data-action="open-favorites" data-focusable aria-label="Favoritos">${gateIcon("favorite")}</button>` : ""}<button class="round-action focusable" data-action="open-source" data-focusable aria-label="Trocar lista">${gateIcon("settings")}</button></div>
   </header>`;
 }
@@ -216,32 +219,67 @@ function formatExpiryDate(value) {
 function renderHome() {
   stopLivePreview();
   state.view = "home";
+  document.body.classList.remove("pairing-page");
   document.title = "GATE IPTV PLAYER";
+  const browserExperience = document.body.classList.contains("browser-mode");
   if (state.source) {
     main.innerHTML = `${topbar()}
-      <section class="tv-home-head"><div><p class="eyebrow">CONTEÚDO DA SUA LISTA</p><h1>O que você quer assistir?</h1></div></section>
+      ${browserExperience ? `<section class="web-welcome"><div><p class="eyebrow">SUA BIBLIOTECA</p><h1>Tudo pronto para assistir.</h1><p>Escolha uma categoria ou conecte uma nova fonte pelo celular.</p></div><button class="web-inline-action focusable" data-action="open-pairing" data-focusable>${gateIcon("qr")}<span><small>CONEXÃO RÁPIDA</small><strong>Adicionar por QR Code</strong></span><b>›</b></button></section>` : '<section class="tv-home-head"><div><p class="eyebrow">CONTEÚDO DA SUA LISTA</p><h1>O que você quer assistir?</h1></div></section>'}
       ${renderConnectedSummary()}`;
     bindDynamicActions();
     refreshFocusable();
     queueEpgForCards();
     return;
   }
-  main.innerHTML = `${topbar()}
-    <section class="hero">
-      <div class="hero-content">
-        <p class="eyebrow">SIMPLES. RÁPIDO. NA SUA TV.</p>
-        <h1>Todo o seu conteúdo<br>em uma única tela.</h1>
-        <p>Conecte uma fonte autorizada por Xtream Codes, M3U/M3U8, arquivo local ou link direto e navegue pelo controle remoto.</p>
-        <div class="button-row">
-          <button class="primary-button focusable" data-action="open-pairing" data-focusable>${gateIcon("qr")} Conectar pelo celular</button>
-          <button class="secondary-button focusable" data-action="open-source" data-focusable>Digitar na TV</button>
-          <a class="ghost-link focusable" href="/assinar" data-link data-focusable>Conhecer o GATE Premium</a>
+  main.innerHTML = browserExperience ? `${topbar()}${renderBrowserWelcome()}` : `${topbar()}
+      <section class="hero">
+        <div class="hero-content">
+          <p class="eyebrow">SIMPLES. RÁPIDO. NA SUA TV.</p>
+          <h1>Todo o seu conteúdo<br>em uma única tela.</h1>
+          <p>Conecte uma fonte autorizada por Xtream Codes, M3U/M3U8, arquivo local ou link direto e navegue pelo controle remoto.</p>
+          <div class="button-row">
+            <button class="primary-button focusable" data-action="open-pairing" data-focusable>${gateIcon("qr")} Conectar pelo celular</button>
+            <button class="secondary-button focusable" data-action="open-source" data-focusable>Digitar na TV</button>
+            <a class="ghost-link focusable" href="/assinar" data-link data-focusable>Conhecer o GATE Premium</a>
+          </div>
         </div>
-      </div>
-    </section>
-    ${renderConnectOptions()}`;
+      </section>
+      ${renderConnectOptions()}`;
   bindDynamicActions();
   refreshFocusable();
+}
+
+function renderBrowserWelcome() {
+  return `<section class="web-landing">
+    <div class="web-landing-copy">
+      <span class="web-kicker"><i></i> PLAYER PARA TODAS AS SUAS TELAS</span>
+      <h1>Sua programação.<br><em>Do seu jeito.</em></h1>
+      <p>Conecte sua fonte autorizada em segundos e assista na Web, Android TV, LG webOS ou Samsung Tizen com uma experiência simples e segura.</p>
+      <div class="web-landing-actions">
+        <button class="primary-button focusable" data-action="open-pairing" data-focusable>${gateIcon("qr")} Conectar pelo celular</button>
+        <button class="secondary-button focusable" data-action="open-source" data-focusable>Inserir dados manualmente</button>
+      </div>
+      <div class="web-trust-list"><span>✓ Sem conteúdo incluso</span><span>✓ Dados temporários</span><span>✓ Feito para Smart TV</span></div>
+    </div>
+    <div class="web-product-preview" aria-hidden="true">
+      <div class="preview-glow"></div>
+      <div class="preview-window">
+        <div class="preview-toolbar"><span><i></i><i></i><i></i></span><small>GATE PLAYER</small><b>AO VIVO</b></div>
+        <div class="preview-feature"><span>AGORA NO GATE</span><strong>Todo o seu conteúdo<br>em um só lugar.</strong><small>Rápido, organizado e pronto para assistir.</small><i>${gateIcon("play")}</i></div>
+        <div class="preview-rail"><span class="cyan">${gateIcon("live")}<b>TV</b></span><span class="coral">${gateIcon("movies")}<b>Filmes</b></span><span class="violet">${gateIcon("series")}<b>Séries</b></span></div>
+      </div>
+      <div class="preview-float-card"><span>${gateIcon("qr")}</span><div><small>CONECTE SEM DIGITAR</small><strong>Leia o QR com o celular</strong></div><b>›</b></div>
+    </div>
+  </section>
+  <section class="web-onboarding">
+    <div class="web-section-heading"><div><p class="eyebrow">COMECE EM SEGUNDOS</p><h2>Três passos. Nenhuma complicação.</h2></div><a class="web-premium-link focusable" href="/assinar" data-link data-focusable>Conhecer o Premium <span>›</span></a></div>
+    <div class="web-step-grid">
+      <button class="web-step-card focusable" data-action="open-pairing" data-focusable><span class="step-number">01</span><i>${gateIcon("qr")}</i><div><strong>Leia o QR Code</strong><small>Use a câmera do celular para abrir a conexão segura.</small></div></button>
+      <button class="web-step-card focusable" data-action="open-source" data-focusable><span class="step-number">02</span><i>${gateIcon("settings")}</i><div><strong>Informe sua fonte</strong><small>Xtream, M3U, Portal ou um link direto autorizado.</small></div></button>
+      <button class="web-step-card focusable" data-action="open-pairing" data-focusable><span class="step-number">03</span><i>${gateIcon("play")}</i><div><strong>Escolha e assista</strong><small>Sua biblioteca aparece organizada automaticamente.</small></div></button>
+    </div>
+  </section>
+  <section class="web-compatibility"><span>COMPATÍVEL COM</span><b>Xtream Codes</b><b>M3U / M3U8</b><b>Portal / MAC</b><b>HLS</b><b>MPEG-TS</b><small>O GATE é somente um player e não fornece canais ou listas.</small></section>`;
 }
 
 function renderConnectOptions() {
@@ -258,6 +296,7 @@ function renderConnectOptions() {
 
 function renderConnectedSummary() {
   const live = Number(state.counts.live ?? state.channels.length);
+  const annualPrice = Math.max(0, Number(state.config?.annualPrice || 30)).toLocaleString("pt-BR", { maximumFractionDigits: 2 });
   const rawStatus = String(state.account?.status || "Ativa").toLowerCase();
   const status = rawStatus === "active" ? "Ativa" : rawStatus === "expired" ? "Expirada" : state.account?.status || "Ativa";
   const expires = formatExpiryDate(state.account?.expiresAt);
@@ -267,17 +306,31 @@ function renderConnectedSummary() {
     if (!state.loadedCatalogs.has(kind) && state.sessionId && !total) return `Abrir catálogo de ${singular.toLowerCase()}s`;
     return `${total.toLocaleString("pt-BR")} ${singular.toLowerCase()}${total === 1 ? "" : "s"}`;
   };
-  return `<section class="account-strip">
+  const account = `<section class="account-strip">
       <span class="account-dot" aria-hidden="true"></span>
       <span><small>STATUS DA LISTA</small><strong>${escapeHtml(status)}</strong></span>
       <span class="account-expiry"><small>DATA DE EXPIRAÇÃO</small><strong>${escapeHtml(expires)}</strong></span>
-    </section>
-    <section class="library-launchers simple-launchers">
+    </section>`;
+  const launchers = `<section class="library-launchers simple-launchers">
       <button class="library-launch focusable live-launch" data-action="open-live" data-focusable><span class="launcher-icon">${gateIcon("live")}</span><span><strong>TV ao vivo</strong><small>${live.toLocaleString("pt-BR")} canais</small></span><b>›</b></button>
       <button class="library-launch focusable movies-launch" data-action="open-movies" data-focusable><span class="launcher-icon">${gateIcon("movies")}</span><span><strong>Filmes</strong><small>${escapeHtml(catalogLabel("movies", "filme"))}</small></span><b>›</b></button>
       <button class="library-launch focusable series-launch" data-action="open-series" data-focusable><span class="launcher-icon">${gateIcon("series")}</span><span><strong>Séries</strong><small>${escapeHtml(catalogLabel("series", "série"))}</small></span><b>›</b></button>
       <button class="library-launch focusable favorites-launch" data-action="open-favorites" data-focusable><span class="launcher-icon">${gateIcon("favorite")}</span><span><strong>Favoritos</strong><small>${state.favorites.size.toLocaleString("pt-BR")} ${state.favorites.size === 1 ? "item salvo" : "itens salvos"}</small></span><b>›</b></button>
     </section>`;
+  if (!document.body.classList.contains("browser-mode")) return `${account}${launchers}`;
+  return `<section class="web-dashboard-grid">
+    <div class="web-library-area">
+      <div class="web-section-heading compact"><div><p class="eyebrow">EXPLORAR</p><h2>O que você quer assistir?</h2></div><span>${(live + Number(state.counts.movies || 0) + Number(state.counts.series || 0)).toLocaleString("pt-BR")} itens disponíveis</span></div>
+      ${launchers}
+    </div>
+    <aside class="web-side-panel">
+      <div class="web-side-heading"><span>MINHA CONTA</span><i>SEGURO</i></div>
+      ${account}
+      <button class="web-side-action focusable" data-action="open-pairing" data-focusable><span class="side-action-icon">${gateIcon("qr")}</span><span><small>USE O CELULAR</small><strong>Conectar outra lista</strong><em>Gere um código temporário e evite digitar na TV.</em></span><b>›</b></button>
+      <a class="web-premium-card focusable" href="/assinar" data-link data-focusable><span><small>GATE PREMIUM</small><strong>Assista sem anúncio inicial</strong><em>Plano anual por R$ ${escapeHtml(annualPrice)}</em></span><b>Conhecer <i>›</i></b></a>
+      <p class="web-security-note">Seus dados de acesso são entregues somente a este aparelho.</p>
+    </aside>
+  </section>`;
 }
 
 function renderFavorites() {
@@ -670,18 +723,22 @@ function renderRenew() {
   document.body.classList.remove("pairing-page");
   document.title = "GATE Premium · Assinatura anual";
   const deviceId = getDeviceId();
+  const annualPrice = Math.max(0, Number(state.config?.annualPrice || 30));
+  const annualPriceLabel = annualPrice.toLocaleString("pt-BR", { minimumFractionDigits: annualPrice % 1 ? 2 : 0, maximumFractionDigits: 2 });
+  const monthlyPriceLabel = (annualPrice / 12).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const paymentAvailable = state.config?.paymentAvailable === true || state.config?.billing?.checkoutAvailable === true;
   main.innerHTML = `${topbar()}
     <section class="premium-hero">
-      <div><p class="eyebrow">GATE PREMIUM</p><h1>Mais rápido para abrir.<br>Mais limpo para assistir.</h1><p>Uma licença anual do aplicativo para remover a publicidade inicial neste aparelho.</p></div>
-      <div class="premium-price"><small>PLANO ANUAL</small><strong><sup>R$</sup> 30</strong><span>equivale a R$ 2,50/mês</span></div>
+      <div><span class="premium-badge">GATE PREMIUM</span><p class="eyebrow">12 MESES NESTE APARELHO</p><h1>Abra o GATE.<br>Vá direto ao que importa.</h1><p>Remova a publicidade inicial e mantenha a experiência mais limpa em todas as versões do player.</p><div class="premium-guarantees"><span>✓ Pagamento único</span><span>✓ Sem renovação automática</span><span>✓ Não inclui conteúdo</span></div></div>
+      <div class="premium-price"><small>PLANO ANUAL</small><strong><sup>R$</sup> ${escapeHtml(annualPriceLabel)}</strong><span>equivale a R$ ${escapeHtml(monthlyPriceLabel)}/mês</span><em>12 meses de licença</em></div>
     </section>
     <section class="premium-layout">
       <div class="premium-benefits">
-        <article><span>01</span><div><strong>Sem anúncio inicial</strong><p>Abra o GATE e vá direto para sua biblioteca.</p></div></article>
-        <article><span>02</span><div><strong>Licença do aparelho</strong><p>Ativação vinculada ao ID seguro desta instalação.</p></div></article>
-        <article><span>03</span><div><strong>Todos os motores</strong><p>Web, Android TV, LG webOS e Samsung Tizen.</p></div></article>
-        <article><span>04</span><div><strong>12 meses de acesso</strong><p>Pagamento único, sem renovação automática nesta etapa.</p></div></article>
+        <div class="premium-section-heading"><p class="eyebrow">O QUE VOCÊ RECEBE</p><h2>Uma experiência mais direta.</h2></div>
+        <article><span>✓</span><div><strong>Sem anúncio inicial</strong><p>Abra o GATE e vá direto para sua biblioteca.</p></div></article>
+        <article><span>✓</span><div><strong>Licença do aparelho</strong><p>Ativação vinculada ao ID seguro desta instalação.</p></div></article>
+        <article><span>✓</span><div><strong>Todos os motores</strong><p>Web, Android TV, LG webOS e Samsung Tizen.</p></div></article>
+        <article><span>✓</span><div><strong>12 meses de acesso</strong><p>Pagamento único e sem renovação automática.</p></div></article>
       </div>
       ${paymentAvailable ? `<form class="subscription-card" id="subscription-form">
         <p class="eyebrow">FINALIZAR ASSINATURA</p>
@@ -864,10 +921,11 @@ function renderPairingPortal() {
   document.body.classList.add("pairing-page");
   const initialCode = normalizePairCode(new URLSearchParams(location.search).get("code") || "");
   main.innerHTML = `<section class="pair-portal">
-    <header class="pair-brand"><img src="/gate-icon.svg" alt=""><span><strong>GATE</strong><small>CONEXÃO SEGURA</small></span></header>
+    <header class="pair-page-header"><a class="pair-brand focusable" href="/" data-link data-focusable><img src="/gate-icon.svg" alt=""><span><strong>GATE</strong><small>CONEXÃO SEGURA</small></span></a><a class="pair-back-link focusable" href="/" data-link data-focusable>${gateIcon("back")} Voltar ao player</a></header>
     <div class="pair-portal-card">
-      <div class="pair-copy"><p class="eyebrow">CONECTAR À TV</p><h1>Envie sua lista<br>sem digitar no controle.</h1><p>O código é temporário e os dados são entregues uma única vez à TV que o gerou.</p></div>
+      <div class="pair-copy"><p class="eyebrow">CONECTAR À TV</p><h1>Envie sua lista<br>sem digitar no controle.</h1><p>O código é temporário e os dados são entregues uma única vez à TV que o gerou.</p><div class="pair-confidence"><span>${gateIcon("qr")}<b>1. Leia o código</b></span><i></i><span>${gateIcon("settings")}<b>2. Informe a fonte</b></span><i></i><span>${gateIcon("play")}<b>3. Assista na TV</b></span></div><small class="pair-security">CONEXÃO TEMPORÁRIA E PROTEGIDA</small></div>
       <form id="pair-portal-form" class="pair-form">
+        <div class="pair-form-heading"><span>PASSO 2 DE 3</span><h2>Conectar sua fonte</h2><p>Use somente uma lista que você tenha autorização para acessar.</p></div>
         <label>Código exibido na TV<input class="focusable pair-code-input" data-focusable name="code" value="${escapeHtml(initialCode)}" placeholder="ABCD-EFGH" autocomplete="one-time-code" required></label>
         <div class="tabs pair-tabs" role="tablist">
           <button class="tab focusable active" type="button" data-pair-type="xtream" data-focusable>Xtream Codes</button>
@@ -1912,7 +1970,18 @@ function renderPaymentReturn(status) {
   main.querySelector("[data-link]")?.addEventListener("click", (event) => { event.preventDefault(); navigate("/"); });
 }
 
+function syncPrimaryNavigation() {
+  const actionByView = { live: "open-live", movies: "open-movies", series: "open-series", favorites: "open-favorites" };
+  document.querySelectorAll(".sidebar .nav-item").forEach((item) => {
+    const isHome = item.matches('[href="/"]') && state.view === "home";
+    const isCurrentAction = item.dataset.action === actionByView[state.view];
+    const isPremium = item.matches('[href="/assinar"]') && ["renew", "payment"].includes(state.view);
+    item.classList.toggle("active", Boolean(isHome || isCurrentAction || isPremium));
+  });
+}
+
 function bindDynamicActions() {
+  syncPrimaryNavigation();
   main.querySelectorAll("[data-action=open-source]").forEach((button) => button.addEventListener("click", () => openSource(button.dataset.tab || "xtream")));
   main.querySelectorAll("[data-action=open-pairing]").forEach((button) => button.addEventListener("click", startPairing));
   main.querySelector("[data-action=toggle-live-favorite]")?.addEventListener("click", () => state.selectedLive && toggleFavorite(state.selectedLive, "live"));
@@ -2358,6 +2427,10 @@ async function boot() {
   if (!restored) route();
   showAd().catch(() => completeInitialAd());
   if (restored) reconnectSavedSource();
-  if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" })
+      .then((registration) => registration.update())
+      .catch(() => {});
+  }
 }
 boot();
