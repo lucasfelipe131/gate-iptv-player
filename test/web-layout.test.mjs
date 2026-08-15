@@ -17,10 +17,13 @@ test("publica uma camada visual exclusiva da Web depois das camadas de TV", () =
   const base = html.indexOf("/styles.css?v=0.6.1-web");
   const tv = html.indexOf("/pro-ui.css?v=1.0.0");
   const web = html.indexOf("/web-ui.css?v=2.0.0");
+  const polishIndex = html.indexOf("/ui-polish.css?v=2.1.0");
   assert.ok(base >= 0);
   assert.ok(tv > base);
   assert.ok(web > tv);
+  assert.ok(polishIndex > web);
   assert.match(html, /app\.js\?v=0\.6\.1-web/);
+  assert.match(html, /pro-ui\.js\?v=2\.1\.0/);
   assert.match(css, /body\.browser-mode \.sidebar[^]*display:\s*flex/);
   assert.match(css, /grid-template-columns:\s*var\(--web-sidebar\) minmax\(0, 1fr\)/);
   assert.match(proJs, /gate-browser-polish/);
@@ -55,14 +58,15 @@ test("pareamento e assinatura recebem hierarquia Web sem mudar seus contratos", 
 });
 
 test("rollout usa revisão nova, não salva erros e revalida CSS e JS", () => {
-  assert.match(sw, /gate-player-v18-tv-ui-2-1/);
+  assert.match(sw, /gate-player-v19-tv-ui-2-1-direct/);
   assert.match(sw, /web-ui\.css\?v=2\.0\.0/);
   assert.match(sw, /ui-polish\.css\?v=2\.1\.0/);
+  assert.match(sw, /pro-ui\.js\?v=2\.1\.0/);
   assert.match(sw, /if \(response\.ok\)/);
   assert.match(sw, /event\.waitUntil\(caches\.open\(CACHE\)/);
   assert.match(sw, /key\.startsWith\(CACHE_PREFIX\)/);
   assert.match(app, /updateViaCache:\s*"none"/);
   assert.match(server, /else if \([^\n]*css\|js/);
   assert.match(server, /no-cache, no-store, must-revalidate/);
-  assert.doesNotMatch(sw, /gate-player-v17-web-ui-2/);
+  assert.doesNotMatch(sw, /gate-player-v18-tv-ui-2-1/);
 });
