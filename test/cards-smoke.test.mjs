@@ -196,7 +196,8 @@ test("adapta o mesmo núcleo para navegador e invólucro Android comum", async (
   });
 
   window.eval(appScript);
-  await waitFor(() => window.document.querySelector(".hero"));
+  await waitFor(() => window.document.querySelector(".web-landing"));
+  assert.equal(window.document.querySelector(".web-dashboard-grid"), null);
   assert.equal(window.document.body.classList.contains("browser-mode"), true);
   assert.equal(window.document.body.classList.contains("android-wrapper"), true);
   assert.equal(window.document.body.classList.contains("tv-optimized"), false);
