@@ -1,10 +1,11 @@
 const CACHE_PREFIX = "gate-player-";
-const CACHE = "gate-player-v17-web-ui-2";
+const CACHE = "gate-player-v18-tv-ui-2-1";
 const ASSETS = [
   "/",
   "/styles.css?v=0.6.1-web",
   "/webos.css?v=1.0.2",
   "/pro-ui.css?v=1.0.0",
+  "/ui-polish.css?v=2.1.0",
   "/web-ui.css?v=2.0.0",
   "/app.js?v=0.6.1-web",
   "/tizen-loader.js?v=0.6.0",
