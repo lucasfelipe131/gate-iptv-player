@@ -652,7 +652,11 @@ function publicPairingSession(entry) {
 
 function pairingBaseUrl(req) {
   const production = String(process.env.NODE_ENV || "").toLowerCase() === "production";
-  const configured = String(process.env.PUBLIC_APP_URL || (!production ? process.env.APP_URL : "") || "").trim();
+  const railwayDomain = String(process.env.RAILWAY_PUBLIC_DOMAIN || "").trim();
+  const railwayUrl = railwayDomain
+    ? (/^https?:\/\//i.test(railwayDomain) ? railwayDomain : `https://${railwayDomain}`)
+    : "";
+  const configured = String(process.env.PUBLIC_APP_URL || (production ? railwayUrl : process.env.APP_URL) || "").trim();
   if (configured) {
     try {
       return normalizeHttpUrl(configured, { maxLength: 2048, requireHttps: production }).replace(/\/$/, "");
@@ -660,7 +664,7 @@ function pairingBaseUrl(req) {
       throw new Error("PUBLIC_APP_URL inválida para o pareamento.");
     }
   }
-  if (production) throw new Error("Configure PUBLIC_APP_URL com a origem HTTPS pública do aplicativo.");
+  if (production) throw new Error("Configure PUBLIC_APP_URL ou RAILWAY_PUBLIC_DOMAIN com a origem HTTPS pública do aplicativo.");
   const host = String(req.get("host") || "").replace(/[\r\n]/g, "");
   if (!host) throw new Error("Não foi possível determinar o endereço público do aplicativo.");
   if (/[\s/@\\?#]/.test(host)) throw new Error("Host local inválido para o pareamento.");
