@@ -1167,12 +1167,17 @@ app.use("/vendor/mpegts.min.js", express.static(path.join(__dirname, "node_modul
 app.use(express.static(path.join(__dirname, "public"), {
   maxAge: "1h",
   setHeaders(res, filePath) {
-    if (/\/(index\.html|app\.js|styles\.css|sw\.js)$/.test(filePath)) {
+    if (/\/(index\.html|sw\.js)$/.test(filePath)) {
       res.setHeader("cache-control", "no-cache, no-store, must-revalidate");
+    } else if (/\.(?:css|js)$/.test(filePath)) {
+      res.setHeader("cache-control", "no-cache, must-revalidate");
     }
   }
 }));
-app.get("/{*path}", (_req, res) => res.sendFile(path.join(__dirname, "public/index.html")));
+app.get("/{*path}", (_req, res) => {
+  res.setHeader("cache-control", "no-cache, no-store, must-revalidate");
+  res.sendFile(path.join(__dirname, "public/index.html"));
+});
 app.use((error, _req, res, _next) => res.status(500).json({ error: error?.message || "Erro interno." }));
 
 const isMainModule = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
