@@ -1867,10 +1867,13 @@ function afterConnected(payload, descriptor = state.connectionDescriptor, option
   if (payload.series?.length) state.loadedCatalogs.add("series");
   localStorage.setItem("gate.lastSource", JSON.stringify({ type: state.source, connectedAt: new Date().toISOString(), counts: state.counts, expiresAt: state.account?.expiresAt || null }));
   closeSource();
-  history.replaceState({}, "", "/");
   state.filter = { query: "", group: "Todos" };
   state.visibleCount = state.pageSize;
-  renderHome();
+  if (options.silent && location.pathname !== "/") route();
+  else {
+    history.replaceState({}, "", "/");
+    renderHome();
+  }
   saveDeviceSnapshot();
   if (!options.silent) showToast(`Lista conectada e salva neste aparelho. Validade: ${formatExpiryDate(state.account?.expiresAt)}.`);
 }
