@@ -1,7 +1,22 @@
-const APP_VERSION = "0.5.3";
+const APP_VERSION = "0.6.0";
 const CACHE_DB = "gate-player-cache-v1";
 const CACHE_STORE = "device";
 const FAVORITES_KEY = "gate.favorites.v1";
+const IMA_SDK_URL = "https://imasdk.googleapis.com/js/sdkloader/ima3.js";
+const TV_STREAM_BUFFER = Object.freeze({
+  back: 18,
+  target: 30,
+  maximum: 60,
+  startup: 4,
+  resume: 8
+});
+const WEB_STREAM_BUFFER = Object.freeze({
+  back: 30,
+  target: 45,
+  maximum: 90,
+  startup: 5,
+  resume: 10
+});
 const catalogGroupCache = new WeakMap();
 const catalogSearchCache = new WeakMap();
 
@@ -11,7 +26,12 @@ function readJsonStorage(key, fallback) {
 }
 
 const state = {
-  config: { annualPrice: 30, adDurationSeconds: 10, paymentAvailable: false },
+  config: {
+    annualPrice: 30,
+    adDurationSeconds: 10,
+    paymentAvailable: false,
+    ads: { enabled: false, mode: "house", fallback: "house", houseAd: { enabled: true, durationSeconds: 10 } }
+  },
   source: null,
   account: null,
   sessionId: null,
@@ -41,6 +61,7 @@ const state = {
   currentItem: null,
   lastFocused: null,
   connectionDescriptor: null,
+  pairing: null,
   favorites: new Set(readJsonStorage(FAVORITES_KEY, [])),
   activation: { key: "", at: 0 },
   adFree: localStorage.getItem("gate.adFree") === "true"
@@ -48,6 +69,7 @@ const state = {
 
 const main = document.querySelector("#main-content");
 const sourceModal = document.querySelector("#source-modal");
+const pairingModal = document.querySelector("#pairing-modal");
 const playerModal = document.querySelector("#player-modal");
 const detailsModal = document.querySelector("#details-modal");
 const detailsPoster = document.querySelector("#details-poster");
@@ -73,7 +95,8 @@ function gateIcon(name, className = "ui-icon") {
     back: '<path d="m15 18-6-6 6-6"/>',
     play: '<path d="m8 5 11 7-11 7Z"/>',
     favorite: '<path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9Z"/>',
-    refresh: '<path d="M20 11a8 8 0 1 0-2.34 5.66M20 4v7h-7"/>'
+    refresh: '<path d="M20 11a8 8 0 1 0-2.34 5.66M20 4v7h-7"/>',
+    qr: '<path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h2v2h-2zM18 14h2v4h-2zM14 18h4v2h-4z"/>'
   };
   return `<svg class="${className}" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${paths[name] || paths.play}</svg>`;
 }
@@ -179,7 +202,7 @@ function topbar() {
   const expiry = state.source ? `<span class="pill expiry-pill">Validade: ${escapeHtml(formatExpiryDate(state.account?.expiresAt))}</span>` : "";
   return `<header class="topbar">
     <button class="top-brand focusable" data-action="go-home" data-focusable><img src="/gate-icon.svg" alt=""><span><strong>GATE</strong><small>IPTV PLAYER</small></span></button>
-    <div class="top-actions">${connected}${expiry}${state.source ? `<button class="round-action focusable" data-action="open-favorites" data-focusable aria-label="Favoritos">${gateIcon("favorite")}</button>` : ""}<button class="round-action focusable" data-action="open-source" data-focusable aria-label="Trocar lista">${gateIcon("settings")}</button></div>
+    <div class="top-actions">${connected}${expiry}<button class="round-action focusable" data-action="open-pairing" data-focusable aria-label="Conectar por QR">${gateIcon("qr")}</button>${state.source ? `<button class="round-action focusable" data-action="open-favorites" data-focusable aria-label="Favoritos">${gateIcon("favorite")}</button>` : ""}<button class="round-action focusable" data-action="open-source" data-focusable aria-label="Trocar lista">${gateIcon("settings")}</button></div>
   </header>`;
 }
 
@@ -210,8 +233,9 @@ function renderHome() {
         <h1>Todo o seu conteúdo<br>em uma única tela.</h1>
         <p>Conecte uma fonte autorizada por Xtream Codes, M3U/M3U8, arquivo local ou link direto e navegue pelo controle remoto.</p>
         <div class="button-row">
-          <button class="primary-button focusable" data-action="open-source" data-focusable>＋ ${state.source ? "Trocar lista" : "Adicionar lista"}</button>
-          <a class="secondary-button focusable" href="/renovar" data-link data-focusable>Remover anúncios · R$ 30/ano</a>
+          <button class="primary-button focusable" data-action="open-pairing" data-focusable>${gateIcon("qr")} Conectar pelo celular</button>
+          <button class="secondary-button focusable" data-action="open-source" data-focusable>Digitar na TV</button>
+          <a class="ghost-link focusable" href="/assinar" data-link data-focusable>Conhecer o GATE Premium</a>
         </div>
       </div>
     </section>
@@ -223,6 +247,7 @@ function renderHome() {
 function renderConnectOptions() {
   return `<div class="section-head"><h2>Formas de conectar</h2><span>Use apenas conteúdo autorizado</span></div>
     <section class="format-grid">
+      <button class="format-card featured-format focusable" data-action="open-pairing" data-focusable><span class="format-icon">${gateIcon("qr")}</span><strong>QR Code</strong><small>Mais rápido: use o celular</small><b>RECOMENDADO</b></button>
       <button class="format-card focusable" data-action="open-source" data-tab="xtream" data-focusable><span class="format-icon">◈</span><strong>Xtream Codes</strong><small>Servidor, usuário e senha</small></button>
       <button class="format-card focusable" data-action="open-source" data-tab="m3u" data-focusable><span class="format-icon">≡</span><strong>M3U / M3U8</strong><small>Link remoto ou arquivo local</small></button>
       <button class="format-card focusable" data-action="open-source" data-tab="portal" data-focusable><span class="format-icon">⌁</span><strong>Portal / MAC</strong><small>Validação para portais compatíveis</small></button>
@@ -642,27 +667,50 @@ function bindCatalogFilters(kind, heading, description = "") {
 
 function renderRenew() {
   state.view = "renew";
-  document.title = "Renovar por MAC · GATE IPTV PLAYER";
+  document.body.classList.remove("pairing-page");
+  document.title = "GATE Premium · Assinatura anual";
   const deviceId = getDeviceId();
+  const paymentAvailable = state.config?.paymentAvailable === true || state.config?.billing?.checkoutAvailable === true;
   main.innerHTML = `${topbar()}
-    <section class="page-title"><p class="eyebrow">GATE SEM ANÚNCIOS</p><h1>Renove seu aparelho<br>usando o MAC.</h1><p>Informe manualmente o MAC exibido no seu aparelho ou portal. Por segurança, navegadores de Smart TV não permitem que o site leia o MAC físico automaticamente.</p></section>
-    <section class="renew-layout">
-      <form class="renew-card" id="renew-form">
-        <h2>Identificar aparelho</h2>
-        <label>Endereço MAC<input class="focusable mac-input" data-focusable name="mac" placeholder="00:1A:79:XX:XX:XX" autocomplete="off" required></label>
-        <div class="mac-preview">ID deste aplicativo: <strong>${deviceId}</strong></div>
+    <section class="premium-hero">
+      <div><p class="eyebrow">GATE PREMIUM</p><h1>Mais rápido para abrir.<br>Mais limpo para assistir.</h1><p>Uma licença anual do aplicativo para remover a publicidade inicial neste aparelho.</p></div>
+      <div class="premium-price"><small>PLANO ANUAL</small><strong><sup>R$</sup> 30</strong><span>equivale a R$ 2,50/mês</span></div>
+    </section>
+    <section class="premium-layout">
+      <div class="premium-benefits">
+        <article><span>01</span><div><strong>Sem anúncio inicial</strong><p>Abra o GATE e vá direto para sua biblioteca.</p></div></article>
+        <article><span>02</span><div><strong>Licença do aparelho</strong><p>Ativação vinculada ao ID seguro desta instalação.</p></div></article>
+        <article><span>03</span><div><strong>Todos os motores</strong><p>Web, Android TV, LG webOS e Samsung Tizen.</p></div></article>
+        <article><span>04</span><div><strong>12 meses de acesso</strong><p>Pagamento único, sem renovação automática nesta etapa.</p></div></article>
+      </div>
+      ${paymentAvailable ? `<form class="subscription-card" id="subscription-form">
+        <p class="eyebrow">FINALIZAR ASSINATURA</p>
+        <h2>Assinar neste aparelho</h2>
+        <label>Seu e-mail<input class="focusable" data-focusable name="email" type="email" inputmode="email" autocomplete="email" placeholder="voce@exemplo.com"></label>
         <label>Nome do aparelho (opcional)<input class="focusable" data-focusable name="deviceName" placeholder="Ex.: TV da sala"></label>
-        <button class="primary-button focusable" data-focusable type="submit">Solicitar renovação anual</button>
-        <div id="renew-result" aria-live="polite"></div>
-      </form>
-      <aside class="price-card"><p class="eyebrow">PLANO ANUAL</p><h2>GATE sem anúncios</h2><div class="price">R$ 30<small>/ano</small></div><ul class="benefits"><li>Remove os anúncios de 10 segundos</li><li>Vinculação a um aparelho</li><li>Compatível com a mesma conta/lista</li><li>Renovação rápida pelo MAC</li></ul><p class="legal-note">A assinatura remove anúncios do player. Ela não inclui canais, filmes, séries nem assinatura de terceiros.</p></aside>
+        <input type="hidden" name="deviceId" value="${escapeHtml(deviceId)}">
+        <div class="device-license"><span>ID DO APARELHO</span><strong>${escapeHtml(deviceId)}</strong></div>
+        <button class="primary-button focusable" data-focusable type="submit">Continuar para o pagamento seguro</button>
+        <div id="subscription-result" aria-live="polite"></div>
+        <p class="legal-note">A assinatura é somente do player GATE. Não inclui canais, listas, filmes, séries ou conteúdo de terceiros.</p>
+      </form>` : `<aside class="subscription-card payment-unavailable" data-payment-unavailable>
+        <p class="eyebrow">PAGAMENTO EM CONFIGURAÇÃO</p>
+        <h2>A assinatura ainda não está disponível.</h2>
+        <p>A cobrança segura está sendo preparada. Nenhum pagamento será solicitado e nenhuma ativação foi realizada.</p>
+        <div class="device-license"><span>ID DESTE APARELHO</span><strong>${escapeHtml(deviceId)}</strong></div>
+        <a class="secondary-button focusable" href="/" data-link data-focusable>Voltar ao GATE TV</a>
+      </aside>`}
     </section>`;
-  bindRenewForm();
+  bindSubscriptionForm();
 }
 
 function route() {
+  document.body.classList.toggle("pairing-page", location.pathname === "/pair");
   document.querySelectorAll(".nav-item").forEach((item) => item.classList.toggle("active", item.getAttribute("href") === location.pathname));
-  if (location.pathname === "/renovar") renderRenew(); else renderHome();
+  if (location.pathname === "/pair") renderPairingPortal();
+  else if (["/assinar", "/renovar"].includes(location.pathname)) renderRenew();
+  else if (location.pathname.startsWith("/payment/")) renderPaymentReturn(location.pathname.split("/").slice(-1)[0]);
+  else { document.body.classList.remove("pairing-page"); renderHome(); }
   refreshFocusable();
 }
 
@@ -681,6 +729,205 @@ function closeSource() {
   sourceModal.classList.add("hidden");
   sourceStatus.textContent = "";
   sourceStatus.className = "form-status";
+}
+
+function trustedQrDataUrl(value) {
+  const dataUrl = String(value || "");
+  return /^data:image\/svg\+xml;base64,[A-Za-z0-9+/]+={0,2}$/.test(dataUrl) ? dataUrl : "";
+}
+
+function clearPairingSession() {
+  stopPairingTimers(state.pairing);
+  state.pairing = null;
+}
+
+function stopPairingTimers(pairing) {
+  if (!pairing) return;
+  if (pairing.pollTimer) clearInterval(pairing.pollTimer);
+  if (pairing.countdownTimer) clearInterval(pairing.countdownTimer);
+  pairing.pollTimer = null;
+  pairing.countdownTimer = null;
+}
+
+function closePairing() {
+  clearPairingSession();
+  pairingModal.classList.add("hidden");
+}
+
+function updatePairingCountdown() {
+  if (!state.pairing) return;
+  const status = document.querySelector("#pairing-status");
+  const seconds = Math.max(0, Math.ceil((new Date(state.pairing.expiresAt).getTime() - Date.now()) / 1000));
+  if (!seconds) {
+    status.textContent = "Código expirado. Gere um novo para continuar.";
+    status.classList.add("error");
+    stopPairingTimers(state.pairing);
+    return;
+  }
+  if (state.pairing.status === "pending") status.textContent = `Aguardando o celular · expira em ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
+async function connectPairedDescriptor(descriptor) {
+  if (descriptor.type === "xtream") {
+    const credentials = {
+      serverUrl: descriptor.serverUrl,
+      username: descriptor.username,
+      password: descriptor.password
+    };
+    const payload = await api("/api/xtream/connect", { method: "POST", body: JSON.stringify(credentials) });
+    closePairing();
+    afterConnected(payload, { type: "xtream", ...credentials });
+    return;
+  }
+  if (descriptor.type === "m3u") {
+    const payload = await api("/api/m3u/parse", { method: "POST", body: JSON.stringify({ url: descriptor.url }) });
+    closePairing();
+    afterConnected(payload, { type: "m3u-url", url: descriptor.url });
+    return;
+  }
+  throw new Error("O celular enviou um formato de lista não reconhecido.");
+}
+
+async function pollPairingSession() {
+  const pairing = state.pairing;
+  if (!pairing || pairing.consuming) return;
+  try {
+    const status = await api(`/api/pairing/${encodeURIComponent(pairing.code)}`);
+    if (state.pairing !== pairing) return;
+    pairing.status = status.status;
+    if (status.status === "pending") return updatePairingCountdown();
+    if (status.status === "expired") {
+      document.querySelector("#pairing-status").textContent = "Código expirado. Gere um novo para continuar.";
+      return;
+    }
+    if (status.status !== "ready") return;
+    pairing.consuming = true;
+    const statusElement = document.querySelector("#pairing-status");
+    statusElement.textContent = "Lista recebida. Validando e organizando seus canais…";
+    statusElement.classList.add("success");
+    const consumed = await api(`/api/pairing/${encodeURIComponent(pairing.code)}/consume`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${pairing.deviceToken}` },
+      body: "{}"
+    });
+    await connectPairedDescriptor(consumed.descriptor);
+  } catch (error) {
+    if (state.pairing !== pairing) return;
+    pairing.consuming = false;
+    const statusElement = document.querySelector("#pairing-status");
+    statusElement.textContent = error.message;
+    statusElement.classList.add("error");
+  }
+}
+
+async function startPairing() {
+  clearPairingSession();
+  pairingModal.classList.remove("hidden");
+  const qr = document.querySelector("#pairing-qr");
+  const loader = document.querySelector("#pairing-qr-loading");
+  const code = document.querySelector("#pairing-code");
+  const status = document.querySelector("#pairing-status");
+  qr.removeAttribute("src");
+  qr.classList.remove("ready");
+  loader.innerHTML = "<i></i><span>Gerando código seguro…</span>";
+  loader.classList.remove("hidden");
+  code.textContent = "••••-••••";
+  status.className = "pairing-status";
+  status.textContent = "Preparando conexão segura…";
+  try {
+    const payload = await api("/api/pairing/sessions", { method: "POST", body: JSON.stringify({ deviceId: getDeviceId() }) });
+    state.pairing = { ...payload, status: "pending", consuming: false, pollTimer: null, countdownTimer: null };
+    code.textContent = payload.code;
+    qr.onload = () => { qr.classList.add("ready"); loader.classList.add("hidden"); };
+    qr.onerror = () => { loader.innerHTML = "<span>Use o código ao lado em outro aparelho.</span>"; };
+    const qrDataUrl = trustedQrDataUrl(payload.qrDataUrl);
+    if (!qrDataUrl) throw new Error("O servidor não retornou um QR Code local válido.");
+    qr.src = qrDataUrl;
+    updatePairingCountdown();
+    state.pairing.pollTimer = setInterval(pollPairingSession, 1_750);
+    state.pairing.countdownTimer = setInterval(updatePairingCountdown, 1_000);
+  } catch (error) {
+    loader.classList.add("hidden");
+    status.textContent = error.message;
+    status.classList.add("error");
+  }
+}
+
+function normalizePairCode(value) {
+  const compact = String(value || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8);
+  return compact.length > 4 ? `${compact.slice(0, 4)}-${compact.slice(4)}` : compact;
+}
+
+function renderPairingPortal() {
+  stopLivePreview();
+  state.view = "pair";
+  document.body.classList.add("pairing-page");
+  const initialCode = normalizePairCode(new URLSearchParams(location.search).get("code") || "");
+  main.innerHTML = `<section class="pair-portal">
+    <header class="pair-brand"><img src="/gate-icon.svg" alt=""><span><strong>GATE</strong><small>CONEXÃO SEGURA</small></span></header>
+    <div class="pair-portal-card">
+      <div class="pair-copy"><p class="eyebrow">CONECTAR À TV</p><h1>Envie sua lista<br>sem digitar no controle.</h1><p>O código é temporário e os dados são entregues uma única vez à TV que o gerou.</p></div>
+      <form id="pair-portal-form" class="pair-form">
+        <label>Código exibido na TV<input class="focusable pair-code-input" data-focusable name="code" value="${escapeHtml(initialCode)}" placeholder="ABCD-EFGH" autocomplete="one-time-code" required></label>
+        <div class="tabs pair-tabs" role="tablist">
+          <button class="tab focusable active" type="button" data-pair-type="xtream" data-focusable>Xtream Codes</button>
+          <button class="tab focusable" type="button" data-pair-type="m3u" data-focusable>Link M3U</button>
+        </div>
+        <div class="pair-fields" data-pair-fields="xtream">
+          <label>Servidor<input class="focusable" data-focusable name="serverUrl" inputmode="url" placeholder="servidor.com:porta"></label>
+          <label>Usuário<input class="focusable" data-focusable name="username" autocomplete="username"></label>
+          <label>Senha<input class="focusable" data-focusable name="password" type="password" autocomplete="current-password"></label>
+        </div>
+        <div class="pair-fields hidden" data-pair-fields="m3u">
+          <label>URL da lista M3U<input class="focusable" data-focusable name="url" type="url" placeholder="https://servidor/lista.m3u"></label>
+        </div>
+        <input type="hidden" name="type" value="xtream">
+        <button class="primary-button focusable" data-focusable type="submit">Enviar para minha TV</button>
+        <div class="pair-submit-status" id="pair-submit-status" aria-live="polite"></div>
+        <p class="pair-legal">O GATE é somente um player e não fornece conteúdo. Use apenas listas autorizadas.</p>
+      </form>
+    </div>
+  </section>`;
+  bindPairingPortal();
+  refreshFocusable();
+}
+
+function bindPairingPortal() {
+  const form = document.querySelector("#pair-portal-form");
+  if (!form) return;
+  const status = document.querySelector("#pair-submit-status");
+  form.elements.code.addEventListener("input", (event) => { event.target.value = normalizePairCode(event.target.value); });
+  main.querySelectorAll("[data-pair-type]").forEach((tab) => tab.addEventListener("click", () => {
+    const type = tab.dataset.pairType;
+    form.elements.type.value = type;
+    main.querySelectorAll("[data-pair-type]").forEach((item) => item.classList.toggle("active", item === tab));
+    main.querySelectorAll("[data-pair-fields]").forEach((fields) => fields.classList.toggle("hidden", fields.dataset.pairFields !== type));
+  }));
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const button = form.querySelector("button[type=submit]");
+    button.disabled = true;
+    button.textContent = "Enviando com segurança…";
+    status.className = "pair-submit-status";
+    status.textContent = "Validando o código da TV…";
+    const values = Object.fromEntries(new FormData(form));
+    const descriptor = values.type === "m3u"
+      ? { type: "m3u", url: values.url, name: "Lista enviada pelo celular" }
+      : { type: "xtream", serverUrl: values.serverUrl, username: values.username, password: values.password, name: "Lista enviada pelo celular" };
+    try {
+      const code = normalizePairCode(values.code);
+      await api(`/api/pairing/${encodeURIComponent(code)}`, { method: "PUT", body: JSON.stringify({ descriptor }) });
+      form.querySelectorAll("input").forEach((input) => { if (input.type === "password") input.value = ""; });
+      status.className = "pair-submit-status success";
+      status.innerHTML = "<strong>Pronto!</strong><span>A lista foi enviada. Volte para a TV — ela conectará automaticamente.</span>";
+      button.textContent = "Lista enviada";
+    } catch (error) {
+      status.className = "pair-submit-status error";
+      status.textContent = error.message;
+      button.disabled = false;
+      button.textContent = "Tentar novamente";
+    }
+  });
 }
 
 function openDetails(item, kind) {
@@ -871,14 +1118,17 @@ function hlsErrorMessage(data) {
 }
 
 function adaptiveHlsOptions(preview = false) {
+  const constrainedTv = document.body.classList.contains("tv-optimized");
+  const buffer = constrainedTv ? TV_STREAM_BUFFER : WEB_STREAM_BUFFER;
   return {
     startLevel: -1,
     capLevelToPlayerSize: true,
-    enableWorker: true,
+    enableWorker: !/Web0S|WebOS|NetCast/i.test(navigator.userAgent || ""),
     lowLatencyMode: false,
-    backBufferLength: preview ? 45 : 90,
-    maxBufferLength: preview ? 60 : 120,
-    maxMaxBufferLength: preview ? 180 : 300,
+    backBufferLength: preview ? Math.min(12, buffer.back) : buffer.back,
+    maxBufferLength: preview ? Math.min(20, buffer.target) : buffer.target,
+    maxMaxBufferLength: preview ? Math.min(40, buffer.maximum) : buffer.maximum,
+    maxBufferSize: constrainedTv ? 48 * 1024 * 1024 : 80 * 1024 * 1024,
     abrBandWidthFactor: .65,
     abrBandWidthUpFactor: .45,
     abrEwmaDefaultEstimate: 1_500_000,
@@ -917,6 +1167,16 @@ function streamCandidates(item) {
   add(item?.fallbackPlayUrl, item?.fallbackStreamType, false);
   add(item?.fallbackPlayUrl, item?.fallbackStreamType, true);
   return candidates;
+}
+
+function isLiveWebPlayback(item, preview = false) {
+  if (preview || item?.live === true) return true;
+  if (item?.live === false) return false;
+  const mediaKind = String(item?.mediaKind || item?.kind || "").toLowerCase();
+  if (["movies", "movie", "series", "episodes", "episode", "vod"].includes(mediaKind)) return false;
+  const streamType = String(item?.streamType || "").toLowerCase();
+  if (streamType === "video") return false;
+  return streamType === "mpegts" || state.view === "live";
 }
 
 function nativePlayerAvailable() {
@@ -1045,9 +1305,11 @@ function bufferedAhead(media) {
 
 function markPlaybackProgress(session) {
   session.lastProgressAt = Date.now();
+  session.lastDataAt = session.lastProgressAt;
   session.starvedAt = 0;
   session.stallRetries = 0;
   session.routeRounds = 0;
+  session.unexpectedPauseAt = 0;
 }
 
 function advanceWebCandidate(session, message) {
@@ -1071,7 +1333,9 @@ function retryWebCandidate(session, message, { preserveNetworkRetries = false } 
   if (!preserveNetworkRetries) session.networkRetries = 0;
   session.mediaRetries = 0;
   session.lastProgressAt = Date.now();
+  session.lastDataAt = session.lastProgressAt;
   session.starvedAt = 0;
+  session.unexpectedPauseAt = 0;
   playbackStatus(session, message || "Reconectando o canal…");
   setTimeout(() => {
     session.switching = false;
@@ -1091,6 +1355,7 @@ function startWebCandidate(session, reason = "") {
     return;
   }
   session.lastProgressAt = Date.now();
+  session.lastDataAt = session.lastProgressAt;
   session.starvedAt = 0;
   session.lastTime = -1;
   session.lastDecodedFrames = -1;
@@ -1110,10 +1375,20 @@ function startWebCandidate(session, reason = "") {
       if (!session.preview) updatePlayerQuality(hls.levels?.[data.level]?.height || session.media.videoHeight);
     });
     if (window.Hls.Events.FRAG_BUFFERED) {
-      hls.on(window.Hls.Events.FRAG_BUFFERED, () => { session.lastDataAt = Date.now(); });
+      hls.on(window.Hls.Events.FRAG_BUFFERED, () => {
+        session.lastDataAt = Date.now();
+        if (!session.media.paused) session.starvedAt = 0;
+      });
     }
     hls.on(window.Hls.Events.ERROR, (_event, data) => {
-      if (!data.fatal || session.destroyed) return;
+      if (session.destroyed) return;
+      if (!data.fatal) {
+        const detail = String(data.details || "").toLowerCase();
+        if (/stalled|buffer|fragloaderror|levelloaderror/.test(detail) && !session.starvedAt) {
+          session.starvedAt = Date.now();
+        }
+        return;
+      }
       if (!candidate.direct && data.type === window.Hls.ErrorTypes.NETWORK_ERROR && session.networkRetries < 2) {
         session.networkRetries += 1;
         playbackStatus(session, "Reconectando sem trocar de rota…");
@@ -1137,14 +1412,15 @@ function startWebCandidate(session, reason = "") {
       const player = window.mpegts.createPlayer({ type: "mpegts", isLive: true, url: candidate.url }, {
         enableWorker: true,
         enableStashBuffer: true,
-        stashInitialSize: session.preview ? 3 * 1024 * 1024 : 8 * 1024 * 1024,
+        stashInitialSize: session.preview ? 1024 * 1024 : 3 * 1024 * 1024,
         lazyLoad: false,
         autoCleanupSourceBuffer: true,
-        autoCleanupMaxBackwardDuration: 60,
-        autoCleanupMinBackwardDuration: 20,
-        liveBufferLatencyChasing: false,
-        liveBufferLatencyMaxLatency: 15,
-        liveBufferLatencyMinRemain: 3
+        autoCleanupMaxBackwardDuration: 30,
+        autoCleanupMinBackwardDuration: 10,
+        liveBufferLatencyChasing: true,
+        liveBufferLatencyMaxLatency: 10,
+        liveBufferLatencyMinRemain: 2,
+        statisticsInfoReportInterval: 1000
       });
       session.mpegts = player;
       player.attachMediaElement(session.media);
@@ -1169,6 +1445,11 @@ function startWebCandidate(session, reason = "") {
           }
         });
       }
+      for (const eventName of ["LOADING_COMPLETE", "RECOVERED_EARLY_EOF"]) {
+        const event = window.mpegts.Events?.[eventName];
+        if (!event) continue;
+        player.on(event, () => retryWebCandidate(session, "O servidor encerrou o fluxo. Reconectando o mesmo canal…"));
+      }
       Promise.resolve(player.play()).catch(() => {
         if (session.preview) requestWebMediaPlay(session);
         else playbackStatus(session, "Pressione OK ou Play para iniciar.", "ready");
@@ -1192,6 +1473,7 @@ function startWebPlayback(media, item, { preview = false } = {}) {
     media,
     item,
     preview,
+    live: isLiveWebPlayback(item, preview),
     candidates,
     index: 0,
     hls: null,
@@ -1208,7 +1490,10 @@ function startWebPlayback(media, item, { preview = false } = {}) {
     mediaRetries: 0,
     stallRetries: 0,
     routeRounds: 0,
-    lastPlayAttemptAt: 0
+    lastPlayAttemptAt: 0,
+    unexpectedPauseAt: 0,
+    userPaused: false,
+    completed: false
   };
   if (preview) {
     media.muted = true;
@@ -1219,6 +1504,8 @@ function startWebPlayback(media, item, { preview = false } = {}) {
   const listen = (name, handler) => { media.addEventListener(name, handler); session.listeners.push([name, handler]); };
   listen("playing", () => {
     session.started = true;
+    session.completed = false;
+    session.userPaused = false;
     markPlaybackProgress(session);
     if (!preview) hidePlayerStatus();
   });
@@ -1237,16 +1524,33 @@ function startWebPlayback(media, item, { preview = false } = {}) {
     if (!session.starvedAt) session.starvedAt = Date.now();
     playbackStatus(session, "Sinal temporariamente sem dados…");
   });
+  listen("ended", () => {
+    if (!session.live) {
+      session.completed = true;
+      session.userPaused = true;
+      session.unexpectedPauseAt = 0;
+      playbackStatus(session, "Reprodução concluída.", "ready");
+      return;
+    }
+    retryWebCandidate(session, "O servidor encerrou o sinal. Reabrindo o mesmo canal…");
+  });
   listen("error", () => advanceWebCandidate(session, "Este formato não abriu nesta rota."));
   session.watchdog = setInterval(() => {
-    if (session.destroyed || session.switching || document.hidden) return;
+    if (session.destroyed || session.switching || session.completed || document.hidden) return;
     const now = Date.now();
     if (media.paused) {
+      if (session.userPaused) return;
       if (!session.started) {
         if (now - session.lastPlayAttemptAt >= 2_500) requestWebMediaPlay(session);
         const startupLimit = preview ? 18_000 : 35_000;
         if (now - session.lastProgressAt > startupLimit) {
           advanceWebCandidate(session, "A reprodução não iniciou nesta rota. Tentando a alternativa…");
+        }
+      } else {
+        if (!session.unexpectedPauseAt) session.unexpectedPauseAt = now;
+        if (now - session.lastPlayAttemptAt >= 2_500) requestWebMediaPlay(session);
+        if (media.ended || now - session.unexpectedPauseAt > (preview ? 6_000 : 9_000)) {
+          retryWebCandidate(session, "O sinal foi interrompido. Reconectando o mesmo canal…");
         }
       }
       return;
@@ -1258,7 +1562,7 @@ function startWebPlayback(media, item, { preview = false } = {}) {
       return;
     }
     if (!session.starvedAt && now - session.lastProgressAt > 12_000) session.starvedAt = now;
-    const starvationLimit = preview ? 45_000 : 60_000;
+    const starvationLimit = preview ? 15_000 : 22_000;
     if (!session.starvedAt || now - session.starvedAt <= starvationLimit) return;
     if (session.stallRetries < 1) {
       session.stallRetries += 1;
@@ -1271,6 +1575,19 @@ function startWebPlayback(media, item, { preview = false } = {}) {
   state[slot] = session;
   startWebCandidate(session);
   return session;
+}
+
+function setWebPlaybackPaused(media, paused) {
+  const session = state.webPlayer?.media === media ? state.webPlayer : state.webPreview?.media === media ? state.webPreview : null;
+  if (session) session.userPaused = Boolean(paused);
+  if (paused) media.pause();
+  else {
+    if (session) {
+      session.userPaused = false;
+      session.unexpectedPauseAt = 0;
+    }
+    media.play().catch(() => {});
+  }
 }
 
 function qualityLabel(height) {
@@ -1351,6 +1668,8 @@ function closePlayer() {
 }
 
 function stopLivePreview() {
+  document.body.classList.remove("live-preview-open");
+  main.querySelector(".live-preview-stage")?.classList.remove("live-preview-immersive");
   destroyWebPlayback("webPreview");
   if (nativePlayerAvailable()) {
     try { window.GateNativePlayer.close(); } catch {}
@@ -1383,18 +1702,17 @@ function openLiveFullscreen() {
   if (nativePlayerAvailable()) {
     try { window.GateNativePlayer.fullscreen(); return; } catch {}
   }
+  stage?.classList.add("live-preview-immersive");
+  document.body.classList.add("live-preview-open");
+  preview.muted = false;
+  preview.defaultMuted = false;
   const request = stage?.requestFullscreen || stage?.webkitRequestFullscreen || preview.webkitEnterFullscreen;
   if (request) {
     try {
-      preview.muted = false;
-      preview.defaultMuted = false;
-      request.call(stage?.requestFullscreen || stage?.webkitRequestFullscreen ? stage : preview);
-      preview.play().catch(() => {});
-      return;
+      Promise.resolve(request.call(stage?.requestFullscreen || stage?.webkitRequestFullscreen ? stage : preview)).catch(() => {});
     } catch {}
   }
-  stopLivePreview();
-  playStream(state.selectedLive, "Reproduzindo", "auto", { immersive: true });
+  preview.play().catch(() => {});
 }
 
 async function openSeries(item) {
@@ -1558,24 +1876,45 @@ function bindForms() {
   });
 }
 
-function bindRenewForm() {
-  document.querySelector("#renew-form")?.addEventListener("submit", async (event) => {
+function bindSubscriptionForm() {
+  document.querySelector("#subscription-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const button = event.currentTarget.querySelector("button[type=submit]");
-    const result = document.querySelector("#renew-result");
-    button.disabled = true; button.textContent = "Criando solicitação…";
+    const result = document.querySelector("#subscription-result");
+    button.disabled = true; button.textContent = "Preparando pagamento seguro…";
     try {
-      const payload = await api("/api/renewals", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(event.currentTarget))) });
-      result.className = "result-box";
-      result.innerHTML = `<strong>Solicitação criada</strong><p>MAC: ${escapeHtml(payload.mac)}<br>Protocolo: ${escapeHtml(payload.protocol)}</p>${payload.checkoutUrl ? `<a class="primary-button focusable" data-focusable href="${escapeHtml(payload.checkoutUrl)}" target="_blank" rel="noopener">Ir para pagamento</a>` : "<p>O pagamento online será liberado assim que a conta de cobrança for conectada.</p>"}`;
+      const payload = await api("/api/billing/checkout", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(event.currentTarget))) });
+      const checkoutUrl = String(payload.checkoutUrl || "");
+      const checkoutQrDataUrl = trustedQrDataUrl(payload.checkoutQrDataUrl);
+      result.className = "result-box checkout-ready";
+      result.innerHTML = `<div><strong>Checkout criado</strong><p>Finalize o pagamento no ambiente seguro do ${payload.provider === "mercadopago" ? "Mercado Pago" : "provedor de pagamento"}.</p><a class="primary-button focusable" data-focusable href="${escapeHtml(checkoutUrl)}" target="_blank" rel="noopener noreferrer">Abrir pagamento</a></div>${checkoutQrDataUrl ? `<img src="${escapeHtml(checkoutQrDataUrl)}" alt="QR Code do pagamento">` : ""}`;
+      button.textContent = "Checkout aguardando pagamento";
       refreshFocusable();
-    } catch (error) { result.className = "result-box"; result.textContent = error.message; }
-    finally { button.disabled = false; button.textContent = "Solicitar renovação anual"; }
+    } catch (error) {
+      result.className = "result-box error";
+      result.innerHTML = `<strong>Pagamento ainda indisponível</strong><p>${escapeHtml(error.message)}</p>`;
+      button.disabled = false;
+      button.textContent = "Tentar novamente";
+    }
   });
+}
+
+function renderPaymentReturn(status) {
+  state.view = "payment";
+  document.body.classList.remove("pairing-page");
+  const messages = {
+    success: ["Pagamento enviado", "O provedor recebeu o pagamento. A ativação será confirmada assim que a transação for validada."],
+    pending: ["Pagamento em análise", "A transação ainda está pendente. Você pode voltar ao aplicativo enquanto ela é processada."],
+    failure: ["Pagamento não concluído", "Nenhuma ativação foi realizada. Volte e tente novamente com outro meio de pagamento."]
+  };
+  const [title, message] = messages[status] || messages.pending;
+  main.innerHTML = `<section class="payment-return"><img src="/gate-icon.svg" alt=""><p class="eyebrow">GATE PREMIUM</p><h1>${escapeHtml(title)}</h1><p>${escapeHtml(message)}</p><a class="primary-button focusable" data-link data-focusable href="/">Voltar ao GATE TV</a></section>`;
+  main.querySelector("[data-link]")?.addEventListener("click", (event) => { event.preventDefault(); navigate("/"); });
 }
 
 function bindDynamicActions() {
   main.querySelectorAll("[data-action=open-source]").forEach((button) => button.addEventListener("click", () => openSource(button.dataset.tab || "xtream")));
+  main.querySelectorAll("[data-action=open-pairing]").forEach((button) => button.addEventListener("click", startPairing));
   main.querySelector("[data-action=toggle-live-favorite]")?.addEventListener("click", () => state.selectedLive && toggleFavorite(state.selectedLive, "live"));
   main.querySelectorAll("[data-live-select]:not([data-action-bound])").forEach((button) => {
     button.dataset.actionBound = "true";
@@ -1621,8 +1960,9 @@ function bindDynamicActions() {
 function setupTvEnvironment() {
   const ua = navigator.userAgent || "";
   const requestedPlatform = new URLSearchParams(location.search).get("platform") || "";
+  const platform = requestedPlatform.toLowerCase();
   const androidWrapper = /^android(?:tv)?$/i.test(requestedPlatform) || /GATE-IPTV-PLAYER\/\d/i.test(ua);
-  const tv = requestedPlatform.toLowerCase() === "androidtv" || /Tizen|Web0S|WebOS|NetCast|SMART-TV|SmartTV|Android TV|AFT|BRAVIA/i.test(ua);
+  const tv = ["androidtv", "webos", "tizen"].includes(platform) || /Tizen|Web0S|WebOS|NetCast|SMART-TV|SmartTV|Android TV|AFT|BRAVIA/i.test(ua);
   const touch = navigator.maxTouchPoints > 0 || (typeof window.matchMedia === "function" && window.matchMedia("(pointer: coarse)").matches);
   document.body.classList.toggle("tv-optimized", tv);
   document.body.classList.toggle("browser-mode", !tv);
@@ -1630,6 +1970,7 @@ function setupTvEnvironment() {
   document.body.classList.toggle("native-player", nativePlayerAvailable());
   document.body.classList.toggle("touch-mode", Boolean(touch));
   document.documentElement.dataset.platform = tv ? "tv" : androidWrapper ? "android-app" : "browser";
+  document.documentElement.dataset.tvPlatform = platform || (tv ? "generic" : "");
   if (window.tizen?.tvinputdevice) {
     try { window.tizen.tvinputdevice.registerKeyBatch(["MediaPlay", "MediaPause", "MediaPlayPause", "MediaStop", "ColorF0Red", "ColorF1Green"]); } catch {}
   }
@@ -1648,8 +1989,11 @@ function cryptoRandom(length) {
 
 let focusables = [];
 function activeFocusScope() {
+  const adOverlay = document.querySelector("#ad-overlay");
+  if (adOverlay && !adOverlay.classList.contains("hidden")) return adOverlay;
   if (!playerModal.classList.contains("hidden")) return playerModal;
   if (!detailsModal.classList.contains("hidden")) return detailsModal;
+  if (!pairingModal.classList.contains("hidden")) return pairingModal;
   if (!sourceModal.classList.contains("hidden")) return sourceModal;
   return document;
 }
@@ -1692,20 +2036,206 @@ function toggleFocusedFavorite() {
   return false;
 }
 
-function showAd() {
-  if (state.adFree || sessionStorage.getItem("gate.adShown")) return;
+let imaSdkPromise = null;
+
+function loadImaSdk(timeoutMs = 7_000) {
+  if (window.google?.ima) return Promise.resolve(window.google.ima);
+  if (imaSdkPromise) return imaSdkPromise;
+  const timeout = Math.min(10_000, Math.max(1_000, Number(timeoutMs) || 7_000));
+  imaSdkPromise = new Promise((resolve, reject) => {
+    const previous = document.querySelector("script[data-gate-ima-sdk]");
+    previous?.remove();
+    const script = document.createElement("script");
+    script.src = IMA_SDK_URL;
+    script.async = true;
+    script.dataset.gateImaSdk = "true";
+    script.referrerPolicy = "strict-origin-when-cross-origin";
+    let settled = false;
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      script.onload = null;
+      script.onerror = null;
+      if (error || !window.google?.ima) {
+        script.remove();
+        imaSdkPromise = null;
+        reject(error || new Error("IMA SDK indisponível."));
+      } else resolve(window.google.ima);
+    };
+    const timer = setTimeout(() => finish(new Error("Tempo esgotado ao carregar publicidade.")), timeout);
+    script.onload = () => finish();
+    script.onerror = () => finish(new Error("Não foi possível carregar publicidade."));
+    document.head.appendChild(script);
+  });
+  return imaSdkPromise;
+}
+
+function resetAdOverlay() {
+  const overlay = document.querySelector("#ad-overlay");
+  overlay?.classList.remove("ima-active");
+  document.querySelector("#ima-ad-container")?.replaceChildren();
+  const contentVideo = document.querySelector("#ima-content-video");
+  if (contentVideo) {
+    try { contentVideo.pause(); } catch {}
+    contentVideo.removeAttribute("src");
+  }
+}
+
+function completeInitialAd() {
+  resetAdOverlay();
+  document.querySelector("#ad-overlay")?.classList.add("hidden");
+  sessionStorage.setItem("gate.adShown", "true");
+  refreshFocusable();
+}
+
+function showHouseAd(configuration = {}) {
   const overlay = document.querySelector("#ad-overlay");
   const countdown = document.querySelector("#ad-countdown");
   const progress = document.querySelector("#ad-progress-bar");
   const skip = document.querySelector("#skip-ad");
-  let remaining = state.config.adDurationSeconds;
-  overlay.classList.remove("hidden"); countdown.textContent = remaining;
-  progress.style.transition = `width ${remaining}s linear`; requestAnimationFrame(() => { progress.style.width = "100%"; });
-  const timer = setInterval(() => {
-    remaining -= 1; countdown.textContent = Math.max(0, remaining);
-    if (remaining <= 0) { clearInterval(timer); skip.disabled = false; skip.textContent = "Continuar"; skip.focus(); }
-  }, 1000);
-  skip.addEventListener("click", () => { if (!skip.disabled) { overlay.classList.add("hidden"); sessionStorage.setItem("gate.adShown", "true"); refreshFocusable(); } }, { once: true });
+  if (!overlay || !countdown || !progress || !skip || configuration.enabled === false) {
+    completeInitialAd();
+    return Promise.resolve(false);
+  }
+  const duration = Math.min(15, Math.max(.1, Number(configuration.durationSeconds ?? state.config.adDurationSeconds) || 10));
+  let remaining = duration;
+  resetAdOverlay();
+  overlay.classList.remove("hidden");
+  countdown.textContent = String(Math.ceil(remaining));
+  skip.disabled = true;
+  skip.innerHTML = `Aguarde <span id="ad-countdown">${Math.ceil(remaining)}</span>s`;
+  const liveCountdown = skip.querySelector("#ad-countdown");
+  progress.style.transition = "none";
+  progress.style.width = "0";
+  requestAnimationFrame(() => {
+    progress.style.transition = `width ${duration}s linear`;
+    progress.style.width = "100%";
+  });
+  return new Promise((resolve) => {
+    let finished = false;
+    const close = () => {
+      if (finished) return;
+      finished = true;
+      clearInterval(timer);
+      clearTimeout(safetyTimer);
+      skip.onclick = null;
+      completeInitialAd();
+      resolve(true);
+    };
+    const startedAt = Date.now();
+    const timer = setInterval(() => {
+      remaining = Math.max(0, duration - ((Date.now() - startedAt) / 1000));
+      if (liveCountdown) liveCountdown.textContent = String(Math.ceil(remaining));
+      if (remaining <= 0) close();
+    }, 250);
+    const safetyTimer = setTimeout(close, Math.ceil(duration * 1000) + 500);
+    skip.onclick = () => { if (!skip.disabled) close(); };
+  });
+}
+
+async function showImaAd(configuration) {
+  const ima = await loadImaSdk(configuration.loadTimeoutMs);
+  const overlay = document.querySelector("#ad-overlay");
+  const adContainer = document.querySelector("#ima-ad-container");
+  const contentVideo = document.querySelector("#ima-content-video");
+  if (!overlay || !adContainer || !contentVideo) return false;
+  resetAdOverlay();
+  overlay.classList.remove("hidden");
+  overlay.classList.add("ima-active");
+  contentVideo.muted = true;
+  return new Promise((resolve) => {
+    let adsLoader = null;
+    let adsManager = null;
+    let adDisplayContainer = null;
+    let settled = false;
+    let started = false;
+    const maxPlaybackMs = Math.min(45_000, Math.max(5_000, Number(configuration.maxPlaybackSeconds) * 1000 || 45_000));
+    const dimensions = () => ({
+      width: Math.max(320, overlay.clientWidth || window.innerWidth || 1280),
+      height: Math.max(180, overlay.clientHeight || window.innerHeight || 720)
+    });
+    const resize = () => {
+      if (!adsManager) return;
+      const { width, height } = dimensions();
+      try { adsManager.resize(width, height, ima.ViewMode.NORMAL); } catch {}
+    };
+    const finish = (played) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(safetyTimer);
+      window.removeEventListener("resize", resize);
+      try { adsManager?.destroy(); } catch {}
+      try { adsLoader?.destroy?.(); } catch {}
+      try { adDisplayContainer?.destroy?.(); } catch {}
+      resetAdOverlay();
+      resolve(Boolean(played));
+    };
+    const safetyTimer = setTimeout(() => finish(started), maxPlaybackMs);
+    try {
+      ima.settings?.setLocale?.("pt_br");
+      adDisplayContainer = new ima.AdDisplayContainer(adContainer, contentVideo);
+      adsLoader = new ima.AdsLoader(adDisplayContainer);
+      adsLoader.addEventListener(ima.AdsManagerLoadedEvent.Type.ADS_MANAGER_LOADED, (event) => {
+        try {
+          const rendering = new ima.AdsRenderingSettings();
+          rendering.enablePreloading = true;
+          rendering.restoreCustomPlaybackStateOnAdBreakComplete = true;
+          rendering.prerollLoadVideoTimeout = Math.min(10_000, Math.max(1_000, Number(configuration.loadTimeoutMs) || 7_000));
+          adsManager = event.getAdsManager(contentVideo, rendering);
+          adsManager.addEventListener(ima.AdErrorEvent.Type.AD_ERROR, () => finish(started));
+          adsManager.addEventListener(ima.AdEvent.Type.STARTED, () => {
+            started = true;
+            try { adsManager.focus?.(); } catch {}
+          });
+          [ima.AdEvent.Type.CONTENT_RESUME_REQUESTED, ima.AdEvent.Type.ALL_ADS_COMPLETED, ima.AdEvent.Type.SKIPPED]
+            .filter(Boolean)
+            .forEach((eventType) => adsManager.addEventListener(eventType, () => finish(started)));
+          const { width, height } = dimensions();
+          adsManager.init(width, height, ima.ViewMode.NORMAL);
+          adsManager.start();
+          window.addEventListener("resize", resize);
+        } catch { finish(started); }
+      }, false);
+      adsLoader.addEventListener(ima.AdErrorEvent.Type.AD_ERROR, () => finish(started), false);
+      adDisplayContainer.initialize();
+      const request = new ima.AdsRequest();
+      const { width, height } = dimensions();
+      request.adTagUrl = configuration.vastAdTagUrl;
+      request.linearAdSlotWidth = width;
+      request.linearAdSlotHeight = height;
+      request.nonLinearAdSlotWidth = width;
+      request.nonLinearAdSlotHeight = Math.max(90, Math.round(height / 3));
+      request.vastLoadTimeout = Math.min(10_000, Math.max(1_000, Number(configuration.loadTimeoutMs) || 7_000));
+      request.setAdWillAutoPlay?.(true);
+      request.setAdWillPlayMuted?.(true);
+      request.setContinuousPlayback?.(false);
+      adsLoader.requestAds(request);
+    } catch { finish(started); }
+  });
+}
+
+function validVastConfiguration(configuration) {
+  if (!configuration?.enabled || configuration.sdkUrl !== IMA_SDK_URL) return false;
+  try { return new URL(configuration.vastAdTagUrl).protocol === "https:"; }
+  catch { return false; }
+}
+
+async function showAd() {
+  if (location.pathname === "/pair" || state.adFree || sessionStorage.getItem("gate.adShown")) return false;
+  const configuration = state.config.ads || {};
+  const imaClient = document.documentElement.dataset.platform === "browser"
+    || ["webos", "tizen"].includes(document.documentElement.dataset.tvPlatform || "");
+  if (imaClient && validVastConfiguration(configuration)) {
+    try {
+      const played = await showImaAd(configuration);
+      if (played) {
+        completeInitialAd();
+        return true;
+      }
+    } catch {}
+  }
+  return showHouseAd(configuration.houseAd || { enabled: true, durationSeconds: state.config.adDurationSeconds });
 }
 
 video.addEventListener("playing", hidePlayerStatus);
@@ -1713,7 +2243,7 @@ video.addEventListener("canplay", () => { if (!video.paused) hidePlayerStatus();
 video.addEventListener("loadedmetadata", () => updatePlayerQuality(video.videoHeight));
 video.addEventListener("waiting", () => showPlayerStatus("Carregando o sinal…"));
 video.addEventListener("stalled", () => showPlayerStatus("Sinal instável. Reconectando…"));
-video.addEventListener("click", () => { if (!playerModal.classList.contains("hidden")) video.paused ? video.play().catch(() => {}) : video.pause(); });
+video.addEventListener("click", () => { if (!playerModal.classList.contains("hidden")) setWebPlaybackPaused(video, !video.paused); });
 retryButton.addEventListener("click", () => state.currentItem && playStream(state.currentItem));
 
 document.addEventListener("click", (event) => {
@@ -1721,16 +2251,20 @@ document.addEventListener("click", (event) => {
   if (link) { event.preventDefault(); navigate(link.getAttribute("href")); }
   const action = event.target.closest("[data-action]")?.dataset.action;
   if (action === "open-source" && !event.target.closest("main")) openSource("xtream");
+  if (action === "open-pairing" && !event.target.closest("main")) startPairing();
+  if (action === "pairing-manual") { closePairing(); openSource("xtream"); }
   if (action === "open-live") state.channels.length ? ensureCatalog("live") : openSource("xtream");
   if (action === "open-movies") state.source ? ensureCatalog("movies") : openSource("xtream");
   if (action === "open-series") state.source ? ensureCatalog("series") : openSource("xtream");
   if (action === "open-favorites") state.source ? renderFavorites() : openSource("xtream");
   if (action === "go-home") renderHome();
   if (action === "live-fullscreen") openLiveFullscreen();
-  if (action === "toggle-adfree") navigate("/renovar");
+  if (action === "toggle-adfree") navigate("/assinar");
 });
 document.querySelectorAll("[data-source-tab]").forEach((tab) => tab.addEventListener("click", () => selectSourceTab(tab.dataset.sourceTab)));
 document.querySelector(".close-modal").addEventListener("click", closeSource);
+document.querySelector(".close-pairing").addEventListener("click", closePairing);
+document.querySelector("#pairing-new-code").addEventListener("click", startPairing);
 document.querySelector(".player-close").addEventListener("click", closePlayer);
 document.querySelector("#details-close").addEventListener("click", () => closeDetails());
 document.querySelector("#details-cancel").addEventListener("click", () => closeDetails());
@@ -1748,8 +2282,11 @@ document.addEventListener("keydown", (event) => {
   const playPausePressed = [13, 19, 415, 10252].includes(code) || event.key === "Enter" || event.key === " ";
   const favoritePressed = [184, 404].includes(code) || event.key?.toLowerCase?.() === "f";
   const playerOpen = !playerModal.classList.contains("hidden");
-  if (backPressed && (document.fullscreenElement || document.webkitFullscreenElement)) {
+  const liveFullscreen = main.querySelector(".live-preview-stage.live-preview-immersive");
+  if (backPressed && (document.fullscreenElement || document.webkitFullscreenElement || liveFullscreen)) {
     event.preventDefault();
+    liveFullscreen?.classList.remove("live-preview-immersive");
+    document.body.classList.remove("live-preview-open");
     if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {});
     else if (document.webkitFullscreenElement && document.webkitExitFullscreen) {
       try { document.webkitExitFullscreen(); } catch {}
@@ -1758,7 +2295,7 @@ document.addEventListener("keydown", (event) => {
   }
   if (playerOpen) {
     if (backPressed || event.key === "Backspace") { event.preventDefault(); closePlayer(); return; }
-    if (playPausePressed) { event.preventDefault(); video.paused ? video.play() : video.pause(); return; }
+    if (playPausePressed) { event.preventDefault(); setWebPlaybackPaused(video, !video.paused); return; }
     if (event.key === "ArrowLeft" || event.key === "ArrowRight") { event.preventDefault(); if (Number.isFinite(video.duration)) video.currentTime = Math.max(0, video.currentTime + (event.key === "ArrowLeft" ? -10 : 10)); return; }
     if (event.key === "ArrowUp" || event.key === "ArrowDown") { event.preventDefault(); video.volume = Math.min(1, Math.max(0, video.volume + (event.key === "ArrowUp" ? .1 : -.1))); return; }
   }
@@ -1780,11 +2317,19 @@ document.addEventListener("keydown", (event) => {
   const directions = { ArrowLeft: "left", ArrowRight: "right", ArrowUp: "up", ArrowDown: "down" };
   if (directions[event.key]) { event.preventDefault(); moveFocus(directions[event.key]); }
   if (backPressed) {
-    if (!sourceModal.classList.contains("hidden")) closeSource();
+    if (!pairingModal.classList.contains("hidden")) closePairing();
+    else if (!sourceModal.classList.contains("hidden")) closeSource();
     else if (location.pathname !== "/") history.back();
     else if (state.view !== "home") renderHome();
   }
 });
+const syncWebLiveFullscreen = () => {
+  if (document.fullscreenElement || document.webkitFullscreenElement) return;
+  main.querySelector(".live-preview-stage.live-preview-immersive")?.classList.remove("live-preview-immersive");
+  document.body.classList.remove("live-preview-open");
+};
+document.addEventListener("fullscreenchange", syncWebLiveFullscreen);
+document.addEventListener("webkitfullscreenchange", syncWebLiveFullscreen);
 document.addEventListener("focusin", (event) => {
   const card = event.target.closest?.(".catalog-grid .media-card, .live-channel-row");
   if (!card) return;
@@ -1811,7 +2356,7 @@ async function boot() {
   bindForms();
   const restored = await restoreDeviceSnapshot();
   if (!restored) route();
-  showAd();
+  showAd().catch(() => completeInitialAd());
   if (restored) reconnectSavedSource();
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
 }
