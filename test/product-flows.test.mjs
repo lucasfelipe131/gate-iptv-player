@@ -37,7 +37,9 @@ test("expiração do pareamento encerra polling e contagem e restaura o loader",
 test("origem do pareamento exige configuração pública em produção", async () => {
   const server = await read("server.mjs");
   assert.match(server, /NODE_ENV[^]*=== "production"/);
-  assert.match(server, /if \(production\) throw new Error\("Configure PUBLIC_APP_URL/);
+  assert.match(server, /process\.env\.RAILWAY_PUBLIC_DOMAIN/);
+  assert.match(server, /production \? railwayUrl : process\.env\.APP_URL/);
+  assert.match(server, /if \(production\) throw new Error\("Configure PUBLIC_APP_URL ou RAILWAY_PUBLIC_DOMAIN/);
   assert.match(server, /requireHttps: production/);
   assert.match(server, /localHostname[^]*localAddress/);
 });
