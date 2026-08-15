@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 const originalEnvironment = {
+  nodeEnv: process.env.NODE_ENV,
   pairingTtl: process.env.PAIRING_SESSION_TTL_MS,
   pairingCreateLimit: process.env.RATE_LIMIT_PAIRING_CREATE,
   publicAppUrl: process.env.PUBLIC_APP_URL,
+  railwayPublicDomain: process.env.RAILWAY_PUBLIC_DOMAIN,
   mercadoPagoToken: process.env.MERCADOPAGO_ACCESS_TOKEN,
   paymentLinkUrl: process.env.PAYMENT_LINK_URL
 };
@@ -41,9 +43,11 @@ async function request(pathname, { method = "GET", body, token, ip = "203.0.113.
 
 function restoreEnvironment() {
   for (const [key, value] of Object.entries({
+    NODE_ENV: originalEnvironment.nodeEnv,
     PAIRING_SESSION_TTL_MS: originalEnvironment.pairingTtl,
     RATE_LIMIT_PAIRING_CREATE: originalEnvironment.pairingCreateLimit,
     PUBLIC_APP_URL: originalEnvironment.publicAppUrl,
+    RAILWAY_PUBLIC_DOMAIN: originalEnvironment.railwayPublicDomain,
     MERCADOPAGO_ACCESS_TOKEN: originalEnvironment.mercadoPagoToken,
     PAYMENT_LINK_URL: originalEnvironment.paymentLinkUrl
   })) {
@@ -54,6 +58,24 @@ function restoreEnvironment() {
 
 test("backend de pareamento, cobrança e renovação de ticket mantém contratos seguros", async (t) => {
   try {
+    await t.test("usa o domínio público automático do Railway em produção", async () => {
+      const previousNodeEnv = process.env.NODE_ENV;
+      const previousPublicAppUrl = process.env.PUBLIC_APP_URL;
+      const previousRailwayDomain = process.env.RAILWAY_PUBLIC_DOMAIN;
+      process.env.NODE_ENV = "production";
+      delete process.env.PUBLIC_APP_URL;
+      process.env.RAILWAY_PUBLIC_DOMAIN = "gate-production.example";
+      try {
+        const created = await request("/api/pairing/sessions", { method: "POST", body: {}, ip: "203.0.113.9" });
+        assert.equal(created.response.status, 201);
+        assert.equal(created.data.qrTargetUrl, `https://gate-production.example/pair?code=${created.data.code}`);
+      } finally {
+        if (previousNodeEnv === undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV = previousNodeEnv;
+        if (previousPublicAppUrl === undefined) delete process.env.PUBLIC_APP_URL; else process.env.PUBLIC_APP_URL = previousPublicAppUrl;
+        if (previousRailwayDomain === undefined) delete process.env.RAILWAY_PUBLIC_DOMAIN; else process.env.RAILWAY_PUBLIC_DOMAIN = previousRailwayDomain;
+      }
+    });
+
     await t.test("pareia Xtream com código legível, token secreto e consumo único", async () => {
       const created = await request("/api/pairing/sessions", { method: "POST", body: {}, ip: "203.0.113.11" });
       assert.equal(created.response.status, 201);
