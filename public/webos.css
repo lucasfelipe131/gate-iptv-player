@@ -1,0 +1,243 @@
+/* LG webOS compatibility layer.
+   Kept separate from the shared UI so older Chromium engines can use
+   deterministic sizing and a visible 5-way remote focus state. */
+
+.webos-tv {
+  overflow: hidden;
+}
+
+.webos-tv .focusable:focus,
+.webos-tv .remote-focused,
+.webos-tv input:focus,
+.webos-tv select:focus,
+.webos-tv textarea:focus {
+  outline: 4px solid #b7ff24 !important;
+  outline-offset: 3px !important;
+  box-shadow: 0 0 0 7px rgba(183, 255, 36, .18), 0 12px 34px rgba(0, 0, 0, .42) !important;
+  position: relative;
+  z-index: 12;
+}
+
+.webos-tv .focusable:focus,
+.webos-tv .remote-focused {
+  transform: none !important;
+}
+
+.webos-tv button,
+.webos-tv a,
+.webos-tv [data-focusable] {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.webos-tv input,
+.webos-tv textarea,
+.webos-tv select {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* Explicit inset fallbacks for older webOS Chromium builds. */
+body.webos-tv::before {
+  top: 8vh;
+  right: 4vw;
+  bottom: 4vh;
+  left: 40vw;
+}
+
+.webos-tv .modal,
+.webos-tv .ad-overlay {
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+}
+
+.webos-tv .media-card .card-artwork,
+.webos-tv .preview-placeholder,
+.webos-tv .details-backdrop::after {
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+}
+
+.webos-tv .player-status {
+  top: 0;
+  right: 0;
+  bottom: 50px;
+  left: 0;
+}
+
+.webos-tv .player-modal-immersive .player-status {
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+}
+
+.webos-tv .details-backdrop {
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 34%;
+}
+
+.webos-tv .live-preview-stage.live-preview-immersive {
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+}
+
+/* Chromium 79 does not support every modern aspect-ratio/flex-gap behavior
+   used by newer browsers. These explicit sizes keep the TV layout stable. */
+.webos-tv .live-preview-stage {
+  height: 360px;
+  min-height: 360px;
+  aspect-ratio: auto;
+}
+
+.webos-tv .live-preview-stage video,
+.webos-tv .live-preview-stage .preview-placeholder {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.webos-tv .details-poster-wrap {
+  width: 280px;
+  height: 420px;
+  aspect-ratio: auto;
+}
+
+.webos-tv .player-shell video {
+  height: 76vh;
+  max-height: 760px;
+  aspect-ratio: auto;
+}
+
+.webos-tv .player-modal-immersive .player-shell video {
+  height: 100vh;
+  max-height: none;
+}
+
+.webos-tv .poster-grid .media-card {
+  min-height: 238px;
+}
+
+/* Flex-gap fallbacks used by the 2021 Chromium 79 engine. */
+.webos-tv .button-row > * + * { margin-left: 12px; }
+.webos-tv .top-actions > * + * { margin-left: 9px; }
+.webos-tv .tabs > * + * { margin-left: 6px; }
+.webos-tv .details-meta > * + * { margin-left: 8px; }
+.webos-tv .top-brand img { margin-right: 11px; }
+.webos-tv .search-box .ui-icon { margin-right: 9px; }
+
+.webos-tv .library-launchers {
+  width: 100%;
+  max-width: 1480px;
+}
+
+.webos-tv .library-launch {
+  min-height: 220px;
+}
+
+.webos-tv .catalog-layout {
+  height: calc(100vh - 178px);
+  min-height: 500px;
+}
+
+.webos-tv .live-layout {
+  height: calc(100vh - 178px);
+  min-height: 500px;
+  grid-template-columns: 220px 410px minmax(430px, 1fr);
+}
+
+.webos-tv .catalog-results,
+.webos-tv .category-row,
+.webos-tv .live-channel-list,
+.webos-tv .modal-card {
+  scroll-behavior: auto !important;
+}
+
+.webos-tv .category-chip,
+.webos-tv .live-channel-row,
+.webos-tv .media-card,
+.webos-tv .library-launch,
+.webos-tv .primary-button,
+.webos-tv .secondary-button,
+.webos-tv .round-action,
+.webos-tv .tab,
+.webos-tv .top-brand {
+  transition: none !important;
+}
+
+.webos-tv .live-channel-row:focus,
+.webos-tv .live-channel-row.remote-focused {
+  background: rgba(183, 255, 36, .12) !important;
+  border-color: rgba(183, 255, 36, .8) !important;
+}
+
+.webos-tv .category-chip:focus,
+.webos-tv .category-chip.remote-focused {
+  background: rgba(24, 191, 232, .24) !important;
+}
+
+.webos-tv .media-card:focus,
+.webos-tv .media-card.remote-focused,
+.webos-tv .library-launch:focus,
+.webos-tv .library-launch.remote-focused {
+  border-color: #b7ff24 !important;
+}
+
+.webos-tv .search-box:focus-within {
+  border-color: #b7ff24;
+  box-shadow: 0 0 0 3px rgba(183, 255, 36, .13);
+}
+
+.webos-tv .modal-card {
+  max-height: 90vh;
+}
+
+.webos-tv .source-form input,
+.webos-tv .renew-card input {
+  min-height: 54px;
+  font-size: 18px;
+}
+
+.webos-tv .tab,
+.webos-tv .primary-button,
+.webos-tv .secondary-button {
+  min-height: 48px;
+}
+
+.webos-tv .toast {
+  transition: none;
+}
+
+@media (max-height: 800px) and (min-width: 1000px) {
+  .webos-tv .live-preview-stage {
+    height: 300px;
+    min-height: 300px;
+  }
+
+  .webos-tv .details-poster-wrap {
+    width: 230px;
+    height: 345px;
+  }
+
+  .webos-tv .library-launch {
+    min-height: 180px;
+  }
+
+  .webos-tv .catalog-layout,
+  .webos-tv .live-layout {
+    height: calc(100vh - 145px);
+    min-height: 390px;
+  }
+}

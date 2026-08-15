@@ -164,8 +164,10 @@ test("carrega logos, capas, EPG e paginação automática no layout de TV", asyn
   assert.equal(window.document.querySelectorAll(".fullscreen-button").length, 0);
   await new Promise((resolve) => setTimeout(resolve, 450));
   firstChannel.click();
-  assert.equal(window.document.querySelector("#player-modal").classList.contains("hidden"), false);
-  window.document.querySelector(".player-close").click();
+  assert.equal(window.document.querySelector(".live-preview-stage").classList.contains("live-preview-immersive"), true);
+  window.document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  assert.equal(window.document.querySelector(".live-preview-stage").classList.contains("live-preview-immersive"), false);
+  assert.equal(window.document.querySelector(".live-layout") !== null, true);
   assert.equal(window.document.querySelectorAll("[data-action='load-more']").length, 0);
   const firstPage = [...window.document.querySelectorAll(".live-channel-row")];
   firstPage.at(-1).focus();
