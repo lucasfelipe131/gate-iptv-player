@@ -3,10 +3,12 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const read = (file) => readFile(new URL(`../${file}`, import.meta.url), "utf8");
-const [html, app, css, sw, server] = await Promise.all([
+const [html, app, css, polish, proJs, sw, server] = await Promise.all([
   read("public/index.html"),
   read("public/app.js"),
   read("public/web-ui.css"),
+  read("public/ui-polish.css"),
+  read("public/pro-ui.js"),
   read("public/sw.js"),
   read("server.mjs")
 ]);
@@ -21,6 +23,8 @@ test("publica uma camada visual exclusiva da Web depois das camadas de TV", () =
   assert.match(html, /app\.js\?v=0\.6\.1-web/);
   assert.match(css, /body\.browser-mode \.sidebar[^]*display:\s*flex/);
   assert.match(css, /grid-template-columns:\s*var\(--web-sidebar\) minmax\(0, 1fr\)/);
+  assert.match(proJs, /gate-browser-polish/);
+  assert.match(polish, /body\.gate-browser-polish\.browser-mode \.live-channel-row/);
 });
 
 test("home Web tem landing nova, dashboard e ações de QR e Premium", () => {
@@ -51,12 +55,14 @@ test("pareamento e assinatura recebem hierarquia Web sem mudar seus contratos", 
 });
 
 test("rollout usa revisão nova, não salva erros e revalida CSS e JS", () => {
-  assert.match(sw, /gate-player-v17-web-ui-2/);
+  assert.match(sw, /gate-player-v18-tv-ui-2-1/);
   assert.match(sw, /web-ui\.css\?v=2\.0\.0/);
+  assert.match(sw, /ui-polish\.css\?v=2\.1\.0/);
   assert.match(sw, /if \(response\.ok\)/);
   assert.match(sw, /event\.waitUntil\(caches\.open\(CACHE\)/);
   assert.match(sw, /key\.startsWith\(CACHE_PREFIX\)/);
   assert.match(app, /updateViaCache:\s*"none"/);
   assert.match(server, /else if \([^\n]*css\|js/);
   assert.match(server, /no-cache, no-store, must-revalidate/);
+  assert.doesNotMatch(sw, /gate-player-v17-web-ui-2/);
 });
