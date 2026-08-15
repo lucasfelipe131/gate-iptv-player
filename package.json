@@ -1,13 +1,15 @@
 {
   "name": "gate-iptv-player",
-  "version": "0.5.3",
+  "version": "0.6.0",
   "private": true,
   "type": "module",
   "description": "GATE IPTV PLAYER — player de mídia para Smart TVs e fontes autorizadas.",
   "scripts": {
     "start": "node server.mjs",
     "dev": "node --watch server.mjs",
-    "test": "node --test"
+    "test": "node --test test/*.test.mjs",
+    "package:webos": "sh scripts/package-webos.sh",
+    "package:tizen": "sh scripts/package-tizen.sh"
   },
   "engines": {
     "node": ">=20"
