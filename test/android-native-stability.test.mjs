@@ -49,6 +49,8 @@ test("detecta congelamento por buffer, relógio e frames de vídeo", () => {
   assert.match(source, /STALL_TIMEOUT_MS = 15_000L/);
   assert.match(source, /VIDEO_STALL_TIMEOUT_MS = 18_000L/);
   assert.match(source, /WATCHDOG_INTERVAL_MS = 1_000L/);
+  assert.match(source, /import androidx\.media3\.exoplayer\.DecoderCounters;/);
+  assert.doesNotMatch(source, /import androidx\.media3\.decoder\.DecoderCounters;/);
   assert.match(source, /getVideoDecoderCounters/);
   assert.match(source, /renderedOutputBufferCount/);
   assert.match(source, /videoFramesSeen[\s\S]*lastRenderedFrameAt/);
