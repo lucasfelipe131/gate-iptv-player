@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile, stat } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -58,14 +58,18 @@ test("Tizen package is scoped to the production origin and AVPlay can recover", 
 });
 
 test("Smart TV packaging scripts are valid POSIX shell", async () => {
+  const packageJson = JSON.parse(await read("package.json"));
+
   for (const script of ["scripts/package-webos.sh", "scripts/package-tizen.sh"]) {
     const path = fileURLToPath(new URL(`../${script}`, import.meta.url));
     const result = spawnSync("sh", ["-n", path], {
       encoding: "utf8"
     });
     assert.equal(result.status, 0, result.stderr);
-    assert.ok((await stat(path)).mode & 0o100, `${script} precisa ser executavel`);
   }
+
+  assert.equal(packageJson.scripts["package:webos"], "sh scripts/package-webos.sh");
+  assert.equal(packageJson.scripts["package:tizen"], "sh scripts/package-tizen.sh");
 
   const webosScript = await read("scripts/package-webos.sh");
   assert.match(webosScript, /platforms\/webos/);
