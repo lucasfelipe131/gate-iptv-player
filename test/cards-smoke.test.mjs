@@ -205,6 +205,50 @@ test("adapta o mesmo núcleo para navegador e invólucro Android comum", async (
   dom.window.close();
 });
 
+test("reconexão silenciosa preserva a página de assinatura", async () => {
+  const dom = new JSDOM(html, {
+    url: "https://gate.test/assinar",
+    runScripts: "outside-only",
+    pretendToBeVisual: true
+  });
+  const { window } = dom;
+  window.sessionStorage.setItem("gate.adShown", "true");
+  window.localStorage.setItem("gate.cache.session", JSON.stringify({
+    source: "xtream",
+    account: { status: "active", expiresAt: "2026-12-31T12:00:00.000Z" },
+    sessionId: "saved-session",
+    counts: { live: 1, movies: 0, series: 0 },
+    channels: [{ id: "1", name: "Canal salvo", playUrl: "/api/stream/saved" }],
+    movies: [],
+    series: [],
+    descriptor: { type: "xtream", serverUrl: "https://provider.test", username: "user", password: "pass" }
+  }));
+  window.fetch = async (input) => {
+    const pathname = new URL(String(input), window.location.href).pathname;
+    if (pathname === "/api/config") return reply({ annualPrice: 30, paymentAvailable: false });
+    if (pathname === "/api/xtream/connect") return reply({
+      source: "xtream",
+      account: { status: "active", expiresAt: "2026-12-31T12:00:00.000Z" },
+      sessionId: "renewed-session",
+      counts: { live: 1, movies: 0, series: 0 },
+      channels: [{ id: "1", name: "Canal renovado", playUrl: "/api/stream/renewed" }]
+    });
+    return reply({ error: "Rota não preparada" }, false);
+  };
+  Object.defineProperty(window.HTMLElement.prototype, "offsetParent", {
+    configurable: true,
+    get() { return this.parentNode ? window.document.body : null; }
+  });
+
+  window.eval(appScript);
+  await waitFor(() => Boolean(window.document.querySelector("[data-payment-unavailable]")));
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  assert.equal(window.location.pathname, "/assinar");
+  assert.equal(window.document.querySelector(".premium-price strong").textContent.replace(/\s+/g, " ").trim(), "R$ 30");
+  assert.equal(window.document.querySelector(".web-dashboard-grid"), null);
+  dom.window.close();
+});
+
 test("usa a ponte nativa no APK sem abrir uma segunda conexão no WebView", async () => {
   const dom = new JSDOM(html, {
     url: "https://gate.test/?platform=androidtv",
