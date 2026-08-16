@@ -36,9 +36,10 @@
       padding: 54px 72px;
       background: radial-gradient(circle at 50% 20%, #132847 0, #081221 38%, #050a13 100%);
       text-align: center;
+      animation: release-boot .01s linear 3s forwards;
     }
-    #boot-screen.ready { display: none; }
-    #boot-screen.failed { opacity: 1; visibility: visible; pointer-events: auto; }
+    #boot-screen.ready { display: none !important; }
+    #boot-screen.failed { animation: none; opacity: 1; visibility: visible; pointer-events: auto; }
     main { width: 100%; max-width: 920px; }
     .app-icon { width: 132px; height: 132px; margin-bottom: 30px; border-radius: 30px; box-shadow: 0 24px 70px rgba(0, 94, 255, .28); }
     h1 { margin: 0; font-size: 62px; letter-spacing: 5px; }
@@ -67,13 +68,14 @@
     .hidden { display: none !important; }
     small { display: block; margin-top: 28px; color: #71809a; font-size: 18px; }
     @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes release-boot { to { opacity: 0; visibility: hidden; pointer-events: none; } }
   </style>
 </head>
 <body>
   <iframe
     id="gate-app"
     title="GATE IPTV PLAYER"
-    src="https://gate-iptv-player-production.up.railway.app/?platform=androidtv&amp;runtime=webos&amp;layout=androidtv&amp;nativePlayer=html5&amp;shellVersion=0.6.7&amp;revision=0.6.7&amp;appVersion=0.6.7&amp;boot=iframe&amp;embedded=1&amp;bridgeToken=gate-webos-0.6.7"
+    src="https://gate-iptv-player-production.up.railway.app/index-webos-android.html?platform=androidtv&amp;runtime=webos&amp;layout=androidtv&amp;nativePlayer=html5&amp;shellVersion=0.6.8&amp;revision=0.6.8&amp;appVersion=0.6.8&amp;boot=iframe&amp;embedded=1&amp;bridgeToken=gate-webos-0.6.8"
     allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
     allowfullscreen
     webkitallowfullscreen
