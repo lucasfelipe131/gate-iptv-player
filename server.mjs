@@ -13,7 +13,7 @@ import { createQrSvgDataUrl } from "./lib/qr-data-url.mjs";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const port = Number(process.env.PORT || 3000);
-const APP_VERSION = "0.6.4";
+const APP_VERSION = "0.6.5";
 const MAX_CATALOG_ITEMS = 2000;
 const MAX_LIVE_ITEMS = 6000;
 const SESSION_TTL = 24 * 60 * 60 * 1000;

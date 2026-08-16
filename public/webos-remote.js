@@ -139,6 +139,11 @@
     if (now - lastNavigationAt < 55) return;
     lastNavigationAt = now;
 
+    if (window.GateRemoteNavigation && typeof window.GateRemoteNavigation.move === "function") {
+      window.GateRemoteNavigation.move(direction);
+      return;
+    }
+
     var list = focusables(activeScope());
     if (!list.length) return;
     var active = document.activeElement;
@@ -301,7 +306,7 @@
   var observer = new MutationObserver(function () {
     scheduleEnsureFocus(80);
   });
-  observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["class", "disabled"] });
+  observer.observe(document.body, { childList: true, subtree: true });
 
   window.addEventListener("pageshow", function () { scheduleEnsureFocus(100); });
   window.addEventListener("load", function () { scheduleEnsureFocus(120); });

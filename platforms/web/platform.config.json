@@ -1,6 +1,6 @@
 {
   "id": "gate-tv-web",
-  "version": "0.6.4",
+  "version": "0.6.5",
   "runtime": "browser-pwa",
   "entry": "../../public/index.html",
   "service": "../../server.mjs",

@@ -2,7 +2,7 @@
   "use strict";
 
   var PLATFORM = "webos";
-  var SHELL_VERSION = "0.6.4";
+  var SHELL_VERSION = "0.6.5";
   var APP_ORIGIN = "https://gate-iptv-player-production.up.railway.app";
   var launchTimer = null;
   var launching = false;

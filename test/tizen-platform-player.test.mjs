@@ -28,7 +28,7 @@ test("Tizen usa AVPlay e recupera fim ou congelamento sem sair do canal", () => 
   assert.match(script, /BUFFER_TIMEOUT_MS = 16_000/);
   assert.match(script, /value !== target\.lastBufferPercent/);
   assert.match(script, /freshUrl\(sourceUrl, attempt\)/);
-  assert.match(script, /GATE-TV-TIZEN\/0\.6\.4/);
+  assert.match(script, /GATE-TV-TIZEN\/0\.6\.5/);
   assert.match(script, /zIndex: "0"/);
   assert.match(styles, /data-tv-platform="tizen"[^}]*body\.native-player \.live-preview-panel[^}]*background: transparent/);
 });

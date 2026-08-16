@@ -1,4 +1,4 @@
-const APP_VERSION = "0.6.4";
+const APP_VERSION = "0.6.5";
 const CACHE_DB = "gate-player-cache-v1";
 const CACHE_STORE = "device";
 const FAVORITES_KEY = "gate.favorites.v1";
@@ -591,7 +591,7 @@ function liveChannelRow(item) {
 function renderLivePreview(item) {
   const epg = item?.id ? state.epg.get(String(item.id)) : null;
   return `<aside class="live-preview-panel">
-    <div class="live-preview-stage">
+    <div class="live-preview-stage focusable" data-focusable data-tv-zone="preview" role="button" tabindex="0" aria-label="Abrir canal em tela cheia">
       <video id="live-preview-video" playsinline muted autoplay></video>
       <div class="preview-placeholder ${item ? "" : "visible"}">
         ${item?.logo ? `<img src="${escapeHtml(item.logo)}" alt="">` : gateIcon("live", "preview-icon")}
@@ -622,11 +622,11 @@ function renderLiveCatalog() {
   main.innerHTML = `${topbar()}
     <section class="catalog-titlebar live-titlebar"><button class="round-action focusable" data-action="go-home" data-focusable aria-label="Voltar">${gateIcon("back")}</button><div><p class="eyebrow">AGORA NA TV</p><h1>TV ao vivo</h1></div><span class="result-count">${filtered.length.toLocaleString("pt-BR")} canais</span></section>
     <section class="live-layout">
-      <aside class="catalog-categories live-categories">
+      <aside class="catalog-categories live-categories" data-tv-zone="categories">
         <label class="search-box">${gateIcon("search")}<input class="focusable" data-focusable id="catalog-search" type="search" placeholder="Buscar canal" value="${escapeHtml(state.filter.query)}"></label>
         <div class="category-row">${groups.map((group) => `<button class="category-chip focusable ${group === state.filter.group ? "active" : ""}" data-group="${escapeHtml(group)}" data-focusable><span>${escapeHtml(group)}</span><b>${groupSummary.count(group)}</b></button>`).join("")}</div>
       </aside>
-      <section class="live-channel-column">
+      <section class="live-channel-column" data-tv-zone="channels">
         <div class="channel-list-head"><span>CANAL</span><span>PROGRAMAÇÃO</span></div>
         <div class="live-channel-list">${visible.map(liveChannelRow).join("")}${visible.length < filtered.length ? `<div class="catalog-autoload" data-auto-load data-kind="live" role="status"><i></i><span>Carregando automaticamente…</span></div>` : ""}</div>
       </section>
@@ -1208,9 +1208,11 @@ function adaptiveHlsOptions(preview = false) {
     maxBufferLength: preview ? Math.min(20, buffer.target) : buffer.target,
     maxMaxBufferLength: preview ? Math.min(40, buffer.maximum) : buffer.maximum,
     maxBufferSize: constrainedTv ? 48 * 1024 * 1024 : 80 * 1024 * 1024,
-    abrBandWidthFactor: quality === "stable" ? .58 : .72,
-    abrBandWidthUpFactor: quality === "stable" ? .42 : .55,
-    abrEwmaDefaultEstimate: quality === "max" ? 8_000_000 : quality === "stable" ? 2_500_000 : 4_000_000,
+    // Keep the proven 0.6.2 estimate in automatic mode. Starting too high made
+    // some TCL TVs jump to a heavy rendition before Wi-Fi was measured.
+    abrBandWidthFactor: quality === "stable" ? .58 : quality === "max" ? .78 : .65,
+    abrBandWidthUpFactor: quality === "stable" ? .42 : quality === "max" ? .62 : .45,
+    abrEwmaDefaultEstimate: quality === "max" ? 8_000_000 : quality === "stable" ? 2_500_000 : 1_500_000,
     liveSyncDurationCount: preview ? 3 : 5,
     liveMaxLatencyDurationCount: preview ? 10 : 18,
     maxLiveSyncPlaybackRate: 1.04,
@@ -2374,7 +2376,7 @@ function bindDynamicActions() {
     button.addEventListener("click", () => {
       const item = state.channels.find((channel) => String(channel.id) === button.dataset.liveSelect);
       if (!item) return;
-      if (!allowActivation(`live:${item.id}`)) return;
+      if (!allowActivation(`live:${item.id}`, 220)) return;
       if (String(state.selectedLive?.id || "") === String(item.id || "")) openLiveFullscreen();
       else playLivePreview(item);
     });
@@ -2441,6 +2443,7 @@ function cryptoRandom(length) {
 }
 
 let focusables = [];
+let lastRemoteMoveAt = 0;
 function activeFocusScope() {
   const adOverlay = document.querySelector("#ad-overlay");
   if (adOverlay && !adOverlay.classList.contains("hidden")) return adOverlay;
@@ -2452,11 +2455,77 @@ function activeFocusScope() {
   return document;
 }
 function refreshFocusable() { focusables = [...activeFocusScope().querySelectorAll("[data-focusable]:not(.hidden):not([disabled])")].filter((element) => element.offsetParent !== null); }
+
+function focusRemoteElement(element) {
+  if (!element || element.offsetParent === null || element.disabled) return false;
+  try { element.focus({ preventScroll: true }); }
+  catch { try { element.focus(); } catch { return false; } }
+  try { element.scrollIntoView({ behavior: "auto", block: "nearest", inline: "nearest" }); }
+  catch { try { element.scrollIntoView(false); } catch {} }
+  return true;
+}
+
+function moveLinear(active, selector, direction) {
+  if (!active?.matches?.(selector)) return false;
+  const list = [...active.parentElement.querySelectorAll(selector)].filter((element) => element.offsetParent !== null && !element.disabled);
+  const index = list.indexOf(active);
+  if (index < 0) return false;
+  const delta = direction === "up" || direction === "left" ? -1 : 1;
+  const target = list[index + delta];
+  if (target) focusRemoteElement(target);
+  return true;
+}
+
+function selectedLiveRow() {
+  return main.querySelector(".live-channel-row.active") || main.querySelector(".live-channel-row");
+}
+
+function moveLiveFocus(active, direction) {
+  if (!main.querySelector(".live-layout")) return false;
+  const activeCategory = main.querySelector(".category-chip.active") || main.querySelector(".category-chip");
+  const liveRow = selectedLiveRow();
+  const preview = main.querySelector(".live-preview-stage[data-focusable]");
+  const favorite = main.querySelector(".live-preview-panel .favorite-button:not([disabled])");
+  const search = main.querySelector("#catalog-search");
+
+  if (active === search) {
+    if (direction === "down") return focusRemoteElement(activeCategory);
+    if (direction === "right") return focusRemoteElement(liveRow);
+    return true;
+  }
+  if (active?.matches?.(".category-chip")) {
+    if (direction === "right") return focusRemoteElement(liveRow);
+    if (direction === "left") return focusRemoteElement(main.querySelector(".browse-back, [data-action='go-home']"));
+    if (direction === "up" && active === active.parentElement.querySelector(".category-chip")) return focusRemoteElement(search);
+    if (direction === "up" || direction === "down") return moveLinear(active, ".category-chip", direction);
+  }
+  if (active?.matches?.(".live-channel-row")) {
+    if (direction === "left") return focusRemoteElement(activeCategory);
+    if (direction === "right") return focusRemoteElement(preview);
+    if (direction === "up" || direction === "down") return moveLinear(active, ".live-channel-row", direction);
+  }
+  if (active === preview) {
+    if (direction === "left") return focusRemoteElement(liveRow);
+    if (direction === "down") return focusRemoteElement(favorite);
+    return true;
+  }
+  if (active === favorite) {
+    if (direction === "left") return focusRemoteElement(liveRow);
+    if (direction === "up") return focusRemoteElement(preview);
+    return true;
+  }
+  return false;
+}
+
 function moveFocus(direction) {
+  const now = performance.now();
+  if (now - lastRemoteMoveAt < 58) return;
+  lastRemoteMoveAt = now;
   refreshFocusable();
   const active = document.activeElement;
+  if (moveLiveFocus(active, direction)) return;
   const current = active?.getBoundingClientRect();
-  if (!current) return focusables[0]?.focus();
+  if (!current || !focusables.includes(active)) return focusRemoteElement(focusables[0]);
   const cx = current.left + current.width / 2, cy = current.top + current.height / 2;
   const candidates = focusables.filter((element) => element !== active).map((element) => {
     const box = element.getBoundingClientRect(); const x = box.left + box.width / 2, y = box.top + box.height / 2;
@@ -2469,9 +2538,16 @@ function moveFocus(direction) {
       : Math.max(0, Math.min(current.right, box.right) - Math.max(current.left, box.left));
     return { element, score: primary + secondary * (crossOverlap > 0 ? 1.35 : 4.2) };
   }).filter(Boolean).sort((a, b) => a.score - b.score);
-  candidates[0]?.element.focus();
-  candidates[0]?.element.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
+  focusRemoteElement(candidates[0]?.element);
 }
+
+window.GateRemoteNavigation = {
+  move: moveFocus,
+  ensure: () => {
+    refreshFocusable();
+    if (!focusables.includes(document.activeElement)) focusRemoteElement(focusables[0]);
+  }
+};
 
 function toggleFocusedFavorite() {
   if (!detailsModal.classList.contains("hidden") && state.detailsItem) return toggleFavorite(state.detailsItem, state.detailsKind);
@@ -2692,6 +2768,7 @@ async function showAd() {
   return showHouseAd(configuration.houseAd || { enabled: true, durationSeconds: state.config.adDurationSeconds });
 }
 
+let focusedEpgTimer = 0;
 const primaryVideoBindings = new WeakSet();
 function bindPrimaryVideoEvents(media) {
   if (!media || primaryVideoBindings.has(media)) return;
@@ -2796,6 +2873,11 @@ document.addEventListener("keydown", (event) => {
     }
     return;
   }
+  if (playPausePressed && event.target?.matches?.(".live-preview-stage[data-focusable]")) {
+    event.preventDefault();
+    event.target.click();
+    return;
+  }
   const directions = { ArrowLeft: "left", ArrowRight: "right", ArrowUp: "up", ArrowDown: "down" };
   if (directions[event.key]) { event.preventDefault(); moveFocus(directions[event.key]); }
   if (backPressed) {
@@ -2819,7 +2901,11 @@ document.addEventListener("focusin", (event) => {
   const cards = [...main.querySelectorAll(state.view === "live" ? ".live-channel-row" : ".catalog-grid .media-card")];
   if (card.dataset.liveId) {
     const index = cards.indexOf(card);
-    queueEpgForCards(cards.slice(Math.max(0, index - 1), index + 6));
+    clearTimeout(focusedEpgTimer);
+    const nearby = cards.slice(Math.max(0, index - 1), index + 5);
+    focusedEpgTimer = setTimeout(() => {
+      if (state.view === "live") queueEpgForCards(nearby);
+    }, 180);
   }
   if (cards.indexOf(card) < Math.max(0, cards.length - 10)) return;
   const sentinel = main.querySelector("[data-auto-load]");

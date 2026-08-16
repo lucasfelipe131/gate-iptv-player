@@ -423,3 +423,98 @@ body.webos-tv.webos-safe-mode .preview-glow {
   body.webos-tv.webos-safe-mode .tv-setting-heading small { font-size: 17px !important; }
   body.webos-tv.webos-safe-mode .tv-choice { min-height: 76px !important; font-size: 20px !important; border-radius: 17px !important; }
 }
+
+/* Compact remote-first channel browser shared with the Android TV layout. */
+body.webos-tv.webos-safe-mode .live-layout {
+  grid-template-columns: 210px 500px minmax(0, 1fr) !important;
+  gap: 12px !important;
+}
+body.webos-tv.webos-safe-mode .catalog-categories,
+body.webos-tv.webos-safe-mode .live-channel-column,
+body.webos-tv.webos-safe-mode .live-preview-panel {
+  border-radius: 6px !important;
+  box-shadow: none !important;
+}
+body.webos-tv.webos-safe-mode .catalog-categories { padding: 10px !important; }
+body.webos-tv.webos-safe-mode .search-box { min-height: 48px !important; border-radius: 4px !important; }
+body.webos-tv.webos-safe-mode .category-row { height: calc(100% - 60px) !important; margin-top: 8px !important; }
+body.webos-tv.webos-safe-mode .category-chip { min-height: 44px !important; border-radius: 2px !important; }
+body.webos-tv.webos-safe-mode .channel-list-head { height: 48px !important; }
+body.webos-tv.webos-safe-mode .live-channel-list { height: calc(100% - 48px) !important; padding: 0 !important; }
+body.webos-tv.webos-safe-mode .live-channel-row {
+  min-height: 82px !important;
+  grid-template-columns: 62px minmax(0, 1fr) 30px !important;
+  gap: 10px !important;
+  margin: 0 !important;
+  padding: 7px 10px !important;
+  border-width: 0 0 1px !important;
+  border-color: rgba(255, 255, 255, .075) !important;
+  border-radius: 0 !important;
+  background: rgba(255, 255, 255, .018) !important;
+}
+body.webos-tv.webos-safe-mode .live-channel-row:nth-child(even) { background: rgba(255, 255, 255, .035) !important; }
+body.webos-tv.webos-safe-mode .channel-logo {
+  width: 58px !important;
+  height: 58px !important;
+  border-radius: 3px !important;
+  box-shadow: none !important;
+}
+body.webos-tv.webos-safe-mode .live-channel-row strong { font-size: 17px !important; }
+body.webos-tv.webos-safe-mode .live-channel-row small { margin-top: 4px !important; font-size: 11px !important; }
+body.webos-tv.webos-safe-mode .live-preview-panel { padding: 10px !important; }
+body.webos-tv.webos-safe-mode .live-preview-stage {
+  height: 390px !important;
+  min-height: 390px !important;
+  border-radius: 4px !important;
+}
+body.webos-tv.webos-safe-mode .live-channel-row:focus,
+body.webos-tv.webos-safe-mode .live-channel-row.remote-focused,
+body.webos-tv.webos-safe-mode .category-chip:focus,
+body.webos-tv.webos-safe-mode .live-preview-stage:focus {
+  outline: 3px solid #d5ff47 !important;
+  outline-offset: -3px !important;
+  box-shadow: inset 5px 0 #d5ff47 !important;
+  transform: none !important;
+}
+
+@media (max-height: 760px) {
+  body.webos-tv.webos-safe-mode .live-layout {
+    grid-template-columns: 155px 340px minmax(0, 1fr) !important;
+    gap: 7px !important;
+  }
+  body.webos-tv.webos-safe-mode .catalog-categories { padding: 6px !important; }
+  body.webos-tv.webos-safe-mode .search-box { min-height: 36px !important; border-radius: 2px !important; }
+  body.webos-tv.webos-safe-mode .category-row { height: calc(100% - 42px) !important; margin-top: 5px !important; }
+  body.webos-tv.webos-safe-mode .category-chip { min-height: 33px !important; padding: 6px !important; border-radius: 0 !important; font-size: 11px !important; }
+  body.webos-tv.webos-safe-mode .channel-list-head { height: 34px !important; }
+  body.webos-tv.webos-safe-mode .live-channel-list { height: calc(100% - 34px) !important; }
+  body.webos-tv.webos-safe-mode .live-channel-row {
+    min-height: 66px !important;
+    grid-template-columns: 48px minmax(0, 1fr) 24px !important;
+    gap: 7px !important;
+    padding: 5px 7px !important;
+  }
+  body.webos-tv.webos-safe-mode .channel-logo { width: 46px !important; height: 46px !important; border-radius: 2px !important; }
+  body.webos-tv.webos-safe-mode .live-channel-row strong { font-size: 14px !important; }
+  body.webos-tv.webos-safe-mode .live-channel-row small { font-size: 9px !important; }
+  body.webos-tv.webos-safe-mode .live-preview-panel { padding: 6px !important; }
+  body.webos-tv.webos-safe-mode .live-preview-stage { height: 250px !important; min-height: 250px !important; border-radius: 2px !important; }
+}
+
+@media (min-width: 2500px) and (min-height: 1300px) {
+  body.webos-tv.webos-safe-mode .live-layout {
+    grid-template-columns: 310px 680px minmax(0, 1fr) !important;
+    gap: 20px !important;
+  }
+  body.webos-tv.webos-safe-mode .channel-list-head { height: 72px !important; }
+  body.webos-tv.webos-safe-mode .live-channel-list { height: calc(100% - 72px) !important; }
+  body.webos-tv.webos-safe-mode .live-channel-row {
+    min-height: 110px !important;
+    grid-template-columns: 88px minmax(0, 1fr) 42px !important;
+    padding: 10px 15px !important;
+  }
+  body.webos-tv.webos-safe-mode .channel-logo { width: 84px !important; height: 84px !important; border-radius: 4px !important; }
+  body.webos-tv.webos-safe-mode .live-channel-row strong { font-size: 24px !important; }
+  body.webos-tv.webos-safe-mode .live-channel-row small { font-size: 16px !important; }
+  body.webos-tv.webos-safe-mode .live-preview-stage { height: 600px !important; min-height: 600px !important; }
+}

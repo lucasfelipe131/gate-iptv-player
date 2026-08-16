@@ -1,6 +1,6 @@
 # GATE TV para LG webOS
 
-Cliente separado para TVs LG. A versão 0.6.4 segue o modelo oficial de aplicativo
+Cliente separado para TVs LG. A versão 0.6.5 segue o modelo oficial de aplicativo
 hospedado do webOS: o shell local redireciona a janela principal para a aplicação
 de produção. O JavaScript faz a abertura imediata e um `meta refresh` independente
 funciona como fallback caso o motor da TV não execute o script inicial.
@@ -29,7 +29,7 @@ sh scripts/package-webos.sh
 O arquivo é criado em `dist/webos/`. Para testar no aparelho:
 
 ```bash
-ares-install -d myTV dist/webos/com.gateone.app.gateiptvplayer_0.6.4_all.ipk
+ares-install -d myTV dist/webos/com.gateone.app.gateiptvplayer_0.6.5_all.ipk
 ares-launch -d myTV com.gateone.app.gateiptvplayer
 ```
 

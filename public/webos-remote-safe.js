@@ -100,6 +100,11 @@
     var now = Date.now();
     if (now - lastMoveAt < 70) return;
     lastMoveAt = now;
+
+    if (window.GateRemoteNavigation && typeof window.GateRemoteNavigation.move === "function") {
+      window.GateRemoteNavigation.move(direction);
+      return;
+    }
     var active = document.activeElement;
 
     if ((direction === "up" || direction === "down") && linearMove(active, ".live-channel-row", direction)) return;

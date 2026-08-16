@@ -17,18 +17,22 @@ const manifest = fs.readFileSync(
   path.join(root, "platforms/android-native/app/src/main/AndroidManifest.xml"),
   "utf8"
 );
+const launcherIcon = fs.readFileSync(
+  path.join(root, "platforms/android-native/app/src/main/res/drawable/gate_icon.xml"),
+  "utf8"
+);
 const bootReceiver = fs.readFileSync(
   path.join(root, "platforms/android-native/app/src/main/java/com/gateone/app/gateiptvplayer/BootReceiver.java"),
   "utf8"
 );
 
-test("publica o motor Android TV como versão 0.6.4 coerente", () => {
-  assert.match(appGradle, /versionCode 64/);
-  assert.match(appGradle, /versionName '0\.6\.4'/);
+test("publica o motor Android TV como versão 0.6.5 coerente", () => {
+  assert.match(appGradle, /versionCode 65/);
+  assert.match(appGradle, /versionName '0\.6\.5'/);
   assert.match(appGradle, /splits\s*\{[\s\S]*abi\s*\{/);
   assert.match(appGradle, /include 'armeabi-v7a', 'arm64-v8a'/);
   assert.match(appGradle, /universalApk false/);
-  assert.match(source, /APP_VERSION = "0\.6\.4"/);
+  assert.match(source, /APP_VERSION = "0\.6\.5"/);
   assert.match(source, /GATE-TV-NATIVE\/" \+ APP_VERSION/);
   assert.match(source, /GATE-IPTV-PLAYER\/" \+ APP_VERSION/);
   assert.doesNotMatch(source, /\.isBlank\(\)/, "isBlank não existe em vários Android TV antigos");
@@ -91,6 +95,14 @@ test("oferece inicialização automática após o boot sem ativá-la à força",
   assert.match(bootReceiver, /FLAG_ACTIVITY_NEW_TASK/);
   assert.match(source, /isAutoStartEnabled\(\)/);
   assert.match(source, /setAutoStartEnabled\(boolean enabled\)/);
+});
+
+test("publica a identidade visual no launcher da TV", () => {
+  assert.match(manifest, /android:icon="@drawable\/gate_icon"/);
+  assert.match(manifest, /android:roundIcon="@drawable\/gate_icon"/);
+  assert.match(manifest, /android:banner="@drawable\/tv_banner"/);
+  assert.match(launcherIcon, /android:viewportWidth="128"/);
+  assert.match(launcherIcon, /android:fillColor="#168BFF"/);
 });
 
 test("renova ticket do mesmo canal sem entrar em loop de player", () => {
