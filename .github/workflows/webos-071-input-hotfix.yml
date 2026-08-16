@@ -1,0 +1,627 @@
+name: Apply LG webOS 0.7.1 Input Hotfix
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/webos-071-input-hotfix.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply-hotfix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Patch webOS input, focus and pairing lifecycle
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          import re
+
+          def read(path):
+              return Path(path).read_text(encoding='utf-8')
+
+          def write(path, content):
+              Path(path).write_text(content, encoding='utf-8')
+
+          def replace_once(text, old, new, label):
+              if old not in text:
+                  raise SystemExit(f'Expected block not found: {label}')
+              return text.replace(old, new, 1)
+
+          # ------------------------------------------------------------------
+          # Shared app: make pairing single-flight and runtime-aware.
+          # ------------------------------------------------------------------
+          app_path = 'public/app.js'
+          app = read(app_path)
+
+          app = replace_once(
+              app,
+              'const catalogGroupCache = new WeakMap();\nconst catalogSearchCache = new WeakMap();',
+              'const catalogGroupCache = new WeakMap();\nconst catalogSearchCache = new WeakMap();\nlet pairingGeneration = 0;\nlet pairingStartPromise = null;',
+              'pairing state variables'
+          )
+
+          app = replace_once(
+              app,
+              '''async function api(path, options = {}) {
+            const response = await fetch(path, {
+              ...options,
+              headers: { "content-type": "application/json", ...(options.headers || {}) }
+            });
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(payload.error || "Não foi possível concluir.");
+            return payload;
+          }''',
+              '''async function api(path, options = {}) {
+            const response = await fetch(path, {
+              ...options,
+              headers: { "content-type": "application/json", ...(options.headers || {}) }
+            });
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok) {
+              const error = new Error(payload.error || "Não foi possível concluir.");
+              error.status = response.status;
+              error.retryAfterSeconds = Number(response.headers.get("retry-after") || payload.retryAfterSeconds || 0);
+              throw error;
+            }
+            return payload;
+          }''',
+              'API structured error'
+          )
+
+          app = replace_once(
+              app,
+              '''function clearPairingSession() {
+            stopPairingTimers(state.pairing);
+            state.pairing = null;
+          }''',
+              '''function clearPairingSession({ invalidate = true } = {}) {
+            if (invalidate) pairingGeneration += 1;
+            stopPairingTimers(state.pairing);
+            state.pairing = null;
+            if (invalidate) pairingStartPromise = null;
+          }''',
+              'clear pairing session'
+          )
+
+          pairing_pattern = re.compile(
+              r'async function pollPairingSession\(\) \{[\s\S]*?\n\}\n\nasync function startPairing\(\) \{[\s\S]*?\n\}\n\nfunction normalizePairCode',
+              re.M
+          )
+          pairing_replacement = r'''async function pollPairingSession() {
+            const pairing = state.pairing;
+            if (!pairing || pairing.consuming) return;
+            try {
+              const status = await api(`/api/pairing/${encodeURIComponent(pairing.code)}`);
+              if (state.pairing !== pairing) return;
+              pairing.status = status.status;
+              pairing.nextPollDelay = 0;
+              if (status.status === "pending") return updatePairingCountdown();
+              if (status.status === "expired") {
+                const statusElement = document.querySelector("#pairing-status");
+                statusElement.textContent = "Código expirado. Gere um novo para continuar.";
+                statusElement.classList.add("error");
+                stopPairingTimers(pairing);
+                return;
+              }
+              if (status.status !== "ready") return;
+              pairing.consuming = true;
+              const statusElement = document.querySelector("#pairing-status");
+              statusElement.textContent = "Lista recebida. Validando e organizando seus canais…";
+              statusElement.classList.add("success");
+              const consumed = await api(`/api/pairing/${encodeURIComponent(pairing.code)}/consume`, {
+                method: "POST",
+                headers: { authorization: `Bearer ${pairing.deviceToken}` },
+                body: "{}"
+              });
+              await connectPairedDescriptor(consumed.descriptor);
+            } catch (error) {
+              if (state.pairing !== pairing) return;
+              pairing.consuming = false;
+              const statusElement = document.querySelector("#pairing-status");
+              if (error.status === 429) {
+                pairing.nextPollDelay = Math.max(6_000, Number(error.retryAfterSeconds || 0) * 1_000);
+                statusElement.textContent = "Conexão segura mantida. Aguardando alguns segundos…";
+                statusElement.classList.remove("error");
+                return;
+              }
+              pairing.nextPollDelay = 5_000;
+              statusElement.textContent = error.message;
+              statusElement.classList.add("error");
+            }
+          }
+
+          function schedulePairingPoll(pairing, delay = 4_000) {
+            if (!pairing || state.pairing !== pairing) return;
+            if (pairing.pollTimer) clearTimeout(pairing.pollTimer);
+            pairing.pollTimer = setTimeout(async () => {
+              pairing.pollTimer = null;
+              if (state.pairing !== pairing || pairing.consuming) return;
+              await pollPairingSession();
+              if (state.pairing === pairing && pairing.status === "pending" && !pairing.consuming) {
+                const nextDelay = pairing.nextPollDelay || 4_000;
+                pairing.nextPollDelay = 0;
+                schedulePairingPoll(pairing, nextDelay);
+              }
+            }, Math.max(1_500, Number(delay) || 4_000));
+          }
+
+          function focusPairingModal() {
+            refreshFocusable();
+            setTimeout(() => {
+              const target = pairingModal.querySelector("#pairing-new-code, [data-action='pairing-manual'], .close-pairing");
+              try { target?.focus(); } catch {}
+              try { window.GateWebOSRemote?.ensureFocus?.(); } catch {}
+            }, 35);
+          }
+
+          async function startPairing(options = {}) {
+            const force = options?.force === true;
+            if (!force && pairingStartPromise) {
+              pairingModal.classList.remove("hidden");
+              focusPairingModal();
+              return pairingStartPromise;
+            }
+            if (!force && !pairingModal.classList.contains("hidden") && state.pairing) {
+              focusPairingModal();
+              return state.pairing;
+            }
+
+            const generation = ++pairingGeneration;
+            stopPairingTimers(state.pairing);
+            state.pairing = null;
+            pairingModal.classList.remove("hidden");
+            pairingModal.setAttribute("aria-busy", "true");
+
+            const qr = document.querySelector("#pairing-qr");
+            const loader = document.querySelector("#pairing-qr-loading");
+            const code = document.querySelector("#pairing-code");
+            const status = document.querySelector("#pairing-status");
+            qr.removeAttribute("src");
+            qr.classList.remove("ready");
+            loader.innerHTML = "<i></i><span>Gerando código seguro…</span>";
+            loader.classList.remove("hidden");
+            code.textContent = "••••-••••";
+            status.className = "pairing-status";
+            status.textContent = "Preparando conexão segura…";
+            focusPairingModal();
+
+            const request = (async () => {
+              try {
+                const payload = await api("/api/pairing/sessions", {
+                  method: "POST",
+                  body: JSON.stringify({ deviceId: getDeviceId() })
+                });
+                if (generation !== pairingGeneration) return null;
+
+                const pairing = {
+                  ...payload,
+                  generation,
+                  status: "pending",
+                  consuming: false,
+                  pollTimer: null,
+                  countdownTimer: null,
+                  nextPollDelay: 0
+                };
+                state.pairing = pairing;
+                code.textContent = payload.code;
+                qr.onload = () => {
+                  if (state.pairing !== pairing) return;
+                  qr.classList.add("ready");
+                  loader.classList.add("hidden");
+                };
+                qr.onerror = () => {
+                  if (state.pairing === pairing) loader.innerHTML = "<span>Use o código ao lado em outro aparelho.</span>";
+                };
+                const qrDataUrl = trustedQrDataUrl(payload.qrDataUrl);
+                if (!qrDataUrl) throw new Error("O servidor não retornou um QR Code local válido.");
+                qr.src = qrDataUrl;
+                pairingModal.setAttribute("aria-busy", "false");
+                updatePairingCountdown();
+                schedulePairingPoll(pairing, 2_500);
+                pairing.countdownTimer = setInterval(updatePairingCountdown, 1_000);
+                focusPairingModal();
+                return pairing;
+              } catch (error) {
+                if (generation !== pairingGeneration) return null;
+                loader.classList.add("hidden");
+                pairingModal.setAttribute("aria-busy", "false");
+                status.textContent = error.message;
+                status.classList.add("error");
+                return null;
+              } finally {
+                if (generation === pairingGeneration) pairingStartPromise = null;
+              }
+            })();
+
+            pairingStartPromise = request;
+            return request;
+          }
+
+          function requestPairing(force = false) {
+            const activationKey = force ? "pairing:new-code" : "pairing:open";
+            if (!allowActivation(activationKey, force ? 700 : 900)) return pairingStartPromise;
+            return startPairing({ force });
+          }
+
+          function normalizePairCode'''
+          app, count = pairing_pattern.subn(pairing_replacement, app, count=1)
+          if count != 1:
+              raise SystemExit('Could not replace pairing lifecycle')
+
+          app = replace_once(
+              app,
+              'main.querySelectorAll("[data-action=open-pairing]").forEach((button) => button.addEventListener("click", startPairing));',
+              'main.querySelectorAll("[data-action=open-pairing]").forEach((button) => button.addEventListener("click", () => requestPairing(false)));',
+              'main pairing actions'
+          )
+          app = replace_once(
+              app,
+              'if (action === "settings-open-pairing") { closeTvSettings(); startPairing(); }',
+              'if (action === "settings-open-pairing") { closeTvSettings(); requestPairing(false); }',
+              'settings pairing action'
+          )
+          app = replace_once(
+              app,
+              'if (action === "open-pairing" && !event.target.closest("main")) startPairing();',
+              'if (action === "open-pairing" && !event.target.closest("main")) requestPairing(false);',
+              'global pairing action'
+          )
+          app = replace_once(
+              app,
+              'document.querySelector("#pairing-new-code").addEventListener("click", startPairing);',
+              'document.querySelector("#pairing-new-code").addEventListener("click", () => requestPairing(true));',
+              'new pairing code action'
+          )
+
+          app = replace_once(
+              app,
+              '''  const requestedPlatform = new URLSearchParams(location.search).get("platform") || "";
+            const platform = requestedPlatform.toLowerCase();''',
+              '''  const environmentParams = new URLSearchParams(location.search);
+            const requestedPlatform = environmentParams.get("platform") || "";
+            const runtimePlatform = String(environmentParams.get("runtime") || "").toLowerCase();
+            const platform = requestedPlatform.toLowerCase();''',
+              'runtime platform detection'
+          )
+          app = replace_once(
+              app,
+              '''  document.body.classList.toggle("android-wrapper", androidWrapper);
+            document.body.classList.toggle("native-player", nativePlayerAvailable());''',
+              '''  document.body.classList.toggle("android-wrapper", androidWrapper);
+            document.body.classList.toggle("webos-runtime", runtimePlatform === "webos");
+            document.body.classList.toggle("native-player", nativePlayerAvailable());''',
+              'webos runtime body class'
+          )
+          app = replace_once(
+              app,
+              'document.documentElement.dataset.tvPlatform = platform || (tv ? "generic" : "");',
+              'document.documentElement.dataset.tvPlatform = runtimePlatform === "webos" ? "webos" : platform || (tv ? "generic" : "");',
+              'effective TV platform'
+          )
+
+          app = replace_once(
+              app,
+              '''  if ("serviceWorker" in navigator) {
+            navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" })
+              .then((registration) => registration.update())
+              .catch(() => {});
+          }''',
+              '''  const runtimePlatform = String(new URLSearchParams(location.search).get("runtime") || "").toLowerCase();
+            if ("serviceWorker" in navigator && runtimePlatform !== "webos") {
+              navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" })
+                .then((registration) => registration.update())
+                .catch(() => {});
+            }''',
+              'disable service worker on webOS runtime'
+          )
+          write(app_path, app)
+
+          # ------------------------------------------------------------------
+          # LG remote: one OK press must equal one action.
+          # ------------------------------------------------------------------
+          remote_path = 'public/webos-remote.js'
+          remote = read(remote_path)
+          remote = replace_once(
+              remote,
+              '  var lastRemoteFocus = null;\n  var lastNavigationAt = 0;\n  var focusTimer = 0;',
+              '  var lastRemoteFocus = null;\n  var lastNavigationAt = 0;\n  var focusTimer = 0;\n  var lastActivationAt = 0;\n  var lastActivationTarget = null;',
+              'remote activation state'
+          )
+          remote = replace_once(
+              remote,
+              '''  function activeScope() {
+            var player = document.getElementById("player-modal");
+            var details = document.getElementById("details-modal");
+            var source = document.getElementById("source-modal");
+            if (player && !player.classList.contains("hidden")) return player;
+            if (details && !details.classList.contains("hidden")) return details;
+            if (source && !source.classList.contains("hidden")) return source;
+            return document;
+          }''',
+              '''  function activeScope() {
+            var ids = ["ad-overlay", "player-modal", "details-modal", "tv-settings-modal", "pairing-modal", "source-modal"];
+            for (var index = 0; index < ids.length; index += 1) {
+              var node = document.getElementById(ids[index]);
+              if (node && !node.classList.contains("hidden")) return node;
+            }
+            return document;
+          }''',
+              'remote active scope'
+          )
+
+          old_enter = '''    if (code === 13 || event.key === "Enter") {
+              if (isEditable(active)) return;
+
+              if (active && active.matches && active.matches(".live-channel-row.active")) {
+                var previewStage = document.querySelector(".live-preview-stage");
+                if (previewStage && typeof previewStage.click === "function") {
+                  event.preventDefault();
+                  event.stopImmediatePropagation();
+                  previewStage.click();
+                  return;
+                }
+              }
+
+              if (active && active !== document.body && active !== document.documentElement && typeof active.click === "function") {
+                event.preventDefault();
+                event.stopImmediatePropagation();
+                active.click();
+                scheduleEnsureFocus(90);
+              } else {
+                ensureFocus();
+              }
+            }'''
+          new_enter = '''    if (code === 13 || event.key === "Enter") {
+              if (isEditable(active)) return;
+              event.preventDefault();
+              event.stopImmediatePropagation();
+              if (event.repeat) return;
+
+              var now = Date.now();
+              if (active && active === lastActivationTarget && now - lastActivationAt < 700) return;
+
+              if (active && active.matches && active.matches(".live-channel-row.active")) {
+                var previewStage = document.querySelector(".live-preview-stage");
+                if (previewStage && typeof previewStage.click === "function") {
+                  lastActivationTarget = active;
+                  lastActivationAt = now;
+                  previewStage.click();
+                  return;
+                }
+              }
+
+              if (active && active !== document.body && active !== document.documentElement && typeof active.click === "function") {
+                lastActivationTarget = active;
+                lastActivationAt = now;
+                active.click();
+                scheduleEnsureFocus(90);
+              } else {
+                ensureFocus();
+              }
+            }'''
+          remote = replace_once(remote, old_enter, new_enter, 'remote Enter handler')
+
+          remote = replace_once(
+              remote,
+              '  window.addEventListener("keydown", handleKeyDown, true);',
+              '''  document.addEventListener("click", function (event) {
+            if (!event.isTrusted || !lastActivationTarget) return;
+            if (Date.now() - lastActivationAt >= 700) return;
+            var target = event.target;
+            var sameTarget = target === lastActivationTarget
+              || (lastActivationTarget.contains && lastActivationTarget.contains(target));
+            if (!sameTarget) return;
+            event.preventDefault();
+            event.stopImmediatePropagation();
+          }, true);
+
+          window.addEventListener("keydown", handleKeyDown, true);''',
+              'trusted duplicate click suppression'
+          )
+          remote = remote.replace('version: "1.1.0"', 'version: "1.2.0"')
+          write(remote_path, remote)
+
+          # ------------------------------------------------------------------
+          # Runtime and a small, deterministic webOS visual/focus layer.
+          # ------------------------------------------------------------------
+          runtime_path = 'public/webos-android-runtime.js'
+          runtime = read(runtime_path)
+          runtime = runtime.replace('document.body.classList.add("webos-android-runtime");',
+                                    'document.body.classList.add("webos-android-runtime", "webos-runtime");\n  document.documentElement.setAttribute("data-tv-platform", "webos");')
+          runtime = runtime.replace('version: "0.6.8"', 'version: "0.7.1"')
+          write(runtime_path, runtime)
+
+          input_css = r'''/* LG webOS input stability layer 0.7.1 */
+          html[data-runtime-platform="webos"],
+          html[data-runtime-platform="webos"] body {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+          }
+
+          body.webos-runtime .modal:not(.hidden),
+          body.webos-android-runtime .modal:not(.hidden) {
+            position: fixed !important;
+            z-index: 12000 !important;
+            top: 0 !important;
+            right: 0 !important;
+            bottom: 0 !important;
+            left: 0 !important;
+            width: 100vw !important;
+            height: 100vh !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            visibility: visible !important;
+            opacity: 1 !important;
+            pointer-events: auto !important;
+            overflow: hidden !important;
+          }
+
+          body.webos-runtime #pairing-modal .pairing-card,
+          body.webos-android-runtime #pairing-modal .pairing-card {
+            width: min(1500px, 94vw) !important;
+            max-height: 92vh !important;
+            overflow: auto !important;
+          }
+
+          body.webos-runtime #pairing-qr.ready,
+          body.webos-android-runtime #pairing-qr.ready {
+            display: block !important;
+            opacity: 1 !important;
+            visibility: visible !important;
+          }
+
+          body.webos-runtime [data-focusable]:focus,
+          body.webos-runtime .remote-focused,
+          body.webos-android-runtime [data-focusable]:focus,
+          body.webos-android-runtime .remote-focused {
+            outline: 5px solid #d5ff47 !important;
+            outline-offset: 3px !important;
+            box-shadow: 0 0 0 7px rgba(213, 255, 71, .18) !important;
+            z-index: 12020 !important;
+          }
+
+          body.webos-runtime .tv-control-hint,
+          body.webos-android-runtime .tv-control-hint {
+            display: none !important;
+          }
+
+          body.webos-runtime *,
+          body.webos-android-runtime * {
+            scroll-behavior: auto !important;
+          }
+          '''
+          write('public/webos-input-fix.css', input_css.strip() + '\n')
+
+          android_html_path = 'public/index-webos-android.html'
+          android_html = read(android_html_path)
+          android_html = re.sub(r'\?v=0\.6\.8', '?v=0.7.1', android_html)
+          if '/webos-input-fix.css?v=0.7.1' not in android_html:
+              android_html = android_html.replace(
+                  '<link id="gate-ui-polish-2" rel="stylesheet" href="/ui-polish.css?v=0.7.1" />',
+                  '<link id="gate-ui-polish-2" rel="stylesheet" href="/ui-polish.css?v=0.7.1" />\n  <link rel="stylesheet" href="/webos-input-fix.css?v=0.7.1" />'
+              )
+          write(android_html_path, android_html)
+
+          # ------------------------------------------------------------------
+          # Package version 0.7.1 and cache-busting shell URL.
+          # ------------------------------------------------------------------
+          appinfo_path = 'platforms/webos/appinfo.json'
+          appinfo = json.loads(read(appinfo_path))
+          appinfo['version'] = '0.7.1'
+          appinfo['appDescription'] = 'Player autorizado para LG webOS TV.'
+          write(appinfo_path, json.dumps(appinfo, ensure_ascii=False, indent=2) + '\n')
+
+          for path in ['platforms/webos/index.html', 'platforms/webos/bridge.js', 'platforms/webos/README.md']:
+              text = read(path).replace('0.7.0', '0.7.1').replace('reload=070', 'reload=071')
+              write(path, text)
+
+          # ------------------------------------------------------------------
+          # Align existing tests and add a regression suite for the physical-TV
+          # failure observed in production logs.
+          # ------------------------------------------------------------------
+          project_path = 'test/project-structure.test.mjs'
+          project = read(project_path).replace('0.7.0', '0.7.1')
+          write(project_path, project)
+
+          smart_path = 'test/smart-tv-platforms.test.mjs'
+          smart = read(smart_path).replace('0.7.0', '0.7.1').replace('0\\.7\\.0', '0\\.7\\.1')
+          smart = smart.replace('0.6.8', '0.7.1').replace('0\\.6\\.8', '0\\.7\\.1')
+          write(smart_path, smart)
+
+          safe_path = 'test/webos-safe-mode.test.mjs'
+          safe = read(safe_path).replace('0.7.0', '0.7.1').replace('0\\.7\\.0', '0\\.7\\.1')
+          safe = safe.replace('0.6.8', '0.7.1').replace('0\\.6\\.8', '0\\.7\\.1')
+          write(safe_path, safe)
+
+          regression = r'''import assert from "node:assert/strict";
+          import { readFile } from "node:fs/promises";
+          import test from "node:test";
+
+          const read = (file) => readFile(new URL(`../${file}`, import.meta.url), "utf8");
+          const [app, remote, runtime, html, css, appinfo] = await Promise.all([
+            read("public/app.js"),
+            read("public/webos-remote.js"),
+            read("public/webos-android-runtime.js"),
+            read("public/index-webos-android.html"),
+            read("public/webos-input-fix.css"),
+            read("platforms/webos/appinfo.json")
+          ]);
+
+          test("QR webOS usa uma única requisição em andamento e polling sem sobreposição", () => {
+            assert.match(app, /let pairingGeneration = 0/);
+            assert.match(app, /let pairingStartPromise = null/);
+            assert.match(app, /if \(!force && pairingStartPromise\)/);
+            assert.match(app, /generation !== pairingGeneration/);
+            assert.match(app, /schedulePairingPoll\(pairing, 2_500\)/);
+            assert.match(app, /pairing\.nextPollDelay/);
+            assert.doesNotMatch(app, /setInterval\(pollPairingSession, 1_750\)/);
+            assert.match(app, /requestPairing\(false\)/);
+            assert.match(app, /requestPairing\(true\)/);
+          });
+
+          test("um OK físico não gera um segundo clique nativo", () => {
+            assert.match(remote, /lastActivationAt/);
+            assert.match(remote, /lastActivationTarget/);
+            assert.match(remote, /event\.repeat/);
+            assert.match(remote, /!event\.isTrusted/);
+            assert.match(remote, /Date\.now\(\) - lastActivationAt >= 700/);
+            assert.match(remote, /tv-settings-modal/);
+            assert.match(remote, /pairing-modal/);
+            assert.match(remote, /version: "1\.2\.0"/);
+          });
+
+          test("runtime LG é identificado como webOS e não reinstala Service Worker", () => {
+            assert.match(app, /runtimePlatform === "webos" \? "webos"/);
+            assert.match(app, /runtimePlatform !== "webos"/);
+            assert.match(runtime, /webos-runtime/);
+            assert.match(runtime, /data-tv-platform/);
+            assert.match(runtime, /version: "0\.7\.1"/);
+          });
+
+          test("modal e foco do QR têm uma camada visível específica para a LG", () => {
+            assert.match(html, /webos-input-fix\.css\?v=0\.7\.1/);
+            assert.match(css, /#pairing-modal \.pairing-card/);
+            assert.match(css, /\.modal:not\(\.hidden\)/);
+            assert.match(css, /outline: 5px solid #d5ff47/);
+            assert.equal(JSON.parse(appinfo).version, "0.7.1");
+          });
+          '''
+          write('test/webos-input-stability.test.mjs', regression.strip() + '\n')
+          PY
+
+      - name: Validate complete project
+        run: |
+          npm ci
+          node --check public/app.js
+          node --check public/webos-remote.js
+          node --check public/webos-android-runtime.js
+          node --check platforms/webos/bridge.js
+          node -e "const x=JSON.parse(require('fs').readFileSync('platforms/webos/appinfo.json','utf8')); if(x.version!=='0.7.1') process.exit(1)"
+          npm test
+          sh -n scripts/package-webos.sh
+
+      - name: Commit hotfix
+        shell: bash
+        run: |
+          git config user.name "GATE TV Automation"
+          git config user.email "actions@users.noreply.github.com"
+          git add public/app.js public/webos-remote.js public/webos-android-runtime.js public/index-webos-android.html public/webos-input-fix.css platforms/webos/appinfo.json platforms/webos/index.html platforms/webos/bridge.js platforms/webos/README.md test/project-structure.test.mjs test/smart-tv-platforms.test.mjs test/webos-safe-mode.test.mjs test/webos-input-stability.test.mjs
+          git commit -m "fix(webos): stabilize remote navigation and QR pairing 0.7.1"
+          git push
