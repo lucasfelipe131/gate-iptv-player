@@ -53,28 +53,25 @@ test("scripts usados em TVs antigas continuam convertidos para Chromium 79", () 
   assert.match(docker, /public\/webos-remote-safe\.js/);
 });
 
-test("IPK 0.6.8 usa a tela Android TV e libera a inicialização em até três segundos", () => {
+test("IPK 0.7.0 abre o layout Android TV na janela principal", () => {
   const info = JSON.parse(appinfo);
-  assert.equal(info.version, "0.6.8");
+  assert.equal(info.version, "0.7.0");
   assert.equal(info.supportTouchMode, "virtual");
-  assert.match(shellHtml, /id="gate-app"/);
-  assert.match(shellHtml, /<iframe/i);
+  assert.ok(info.appDescription.length <= 60);
+  assert.match(shellHtml, /http-equiv="refresh"/);
   assert.match(shellHtml, /index-webos-android\.html/);
   assert.match(shellHtml, /platform=androidtv/);
   assert.match(shellHtml, /runtime=webos/);
   assert.match(shellHtml, /nativePlayer=html5/);
-  assert.match(shellHtml, /shellVersion=0\.6\.8/);
-  assert.match(shellHtml, /bridgeToken=gate-webos-0\.6\.8/);
-  assert.match(shellHtml, /release-boot[^]*3s/);
+  assert.match(shellHtml, /shellVersion=0\.7\.0/);
+  assert.doesNotMatch(shellHtml, /<iframe/i);
 
-  assert.match(bridge, /SHELL_VERSION = "0\.6\.8"/);
-  assert.match(bridge, /APP_PATH = "\/index-webos-android\.html"/);
+  assert.match(bridge, /SHELL_VERSION = "0\.7\.0"/);
+  assert.match(bridge, /APP_URL = "https:\/\/gate-iptv-player-production\.up\.railway\.app\/index-webos-android\.html"/);
   assert.match(bridge, /UI_PLATFORM = "androidtv"/);
   assert.match(bridge, /nativePlayer=html5/);
-  assert.match(bridge, /setTimeout\(markReady, 2800\)/);
-  assert.match(bridge, /bootScreen\.style\.display = "none"/);
-  assert.match(bridge, /bootScreen\.hidden = true/);
-  assert.doesNotMatch(bridge, /location\.replace/);
+  assert.match(bridge, /location\.replace\(buildLaunchUrl/);
+  assert.doesNotMatch(bridge, /contentWindow|postMessage|gate-webos-remote/);
 });
 
 test("runtime webOS desativa cache antigo e força MPEG-TS sem Worker", () => {
@@ -86,15 +83,13 @@ test("runtime webOS desativa cache antigo e força MPEG-TS sem Worker", () => {
   assert.match(runtime, /Service Worker disabled on LG webOS runtime/);
   assert.match(runtime, /safeConfig\.enableWorker = false/);
   assert.match(runtime, /safeConfig\.lazyLoad = false/);
-  assert.match(runtime, /gate-webos-ready/);
   assert.match(runtime, /gate\.adShown/);
 });
 
-test("controle LG continua encaminhado para o layout Android TV", () => {
+test("controle LG atua diretamente no documento hospedado", () => {
   assert.match(remote, /runtimePlatform === "webos"/);
   assert.match(remote, /androidTvLayout/);
-  assert.match(remote, /event\.source !== window\.parent/);
-  assert.match(remote, /dispatchBridgedKey/);
-  assert.match(remote, /window\.dispatchEvent\(synthetic\)/);
-  assert.match(bridge, /gate-webos-remote/);
+  assert.match(remote, /window\.addEventListener\("keydown", handleKeyDown/);
+  assert.match(remote, /active\.click\(\)/);
+  assert.doesNotMatch(shellHtml, /iframe/);
 });
