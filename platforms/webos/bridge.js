@@ -2,10 +2,11 @@
   "use strict";
 
   var PLATFORM = "webos";
-  var SHELL_VERSION = "0.6.6";
+  var UI_PLATFORM = "androidtv";
+  var SHELL_VERSION = "0.6.7";
   var APP_ORIGIN = "https://gate-iptv-player-production.up.railway.app";
-  var BRIDGE_TOKEN = "gate-webos-0.6.6";
-  var READY_TIMEOUT_MS = 18000;
+  var BRIDGE_TOKEN = "gate-webos-0.6.7";
+  var READY_TIMEOUT_MS = 20000;
   var frame = null;
   var bootScreen = null;
   var statusNode = null;
@@ -15,9 +16,11 @@
   var ready = false;
 
   function buildLaunchUrl(cacheBust) {
-    var url = APP_ORIGIN + "/?platform=" + encodeURIComponent(PLATFORM)
+    var url = APP_ORIGIN + "/?platform=" + encodeURIComponent(UI_PLATFORM)
+      + "&runtime=" + encodeURIComponent(PLATFORM)
+      + "&layout=androidtv"
+      + "&nativePlayer=html5"
       + "&shellVersion=" + encodeURIComponent(SHELL_VERSION)
-      + "&safe=1"
       + "&revision=" + encodeURIComponent(SHELL_VERSION)
       + "&appVersion=" + encodeURIComponent(SHELL_VERSION)
       + "&boot=iframe"
@@ -85,13 +88,11 @@
   function loadApp(cacheBust) {
     if (!frame) return;
     ready = false;
-    if (bootScreen) {
-      bootScreen.classList.remove("ready", "failed");
-    }
+    if (bootScreen) bootScreen.classList.remove("ready", "failed");
     hideRetry();
     setStatus(navigator.onLine === false
       ? "A TV está sem internet. Reconecte a rede para continuar."
-      : "Abrindo o aplicativo na sua TV LG…");
+      : "Abrindo a interface otimizada para sua TV LG…");
     frame.src = buildLaunchUrl(Boolean(cacheBust));
     startReadyTimeout();
   }
@@ -166,15 +167,13 @@
     frame.addEventListener("load", function () {
       setStatus("Finalizando a abertura do GATE TV…");
       focusFrame();
-      root.setTimeout(focusFrame, 250);
+      root.setTimeout(markReady, 850);
     });
     frame.addEventListener("error", function () {
       showFailure("Não foi possível carregar o aplicativo. Verifique a internet e tente novamente.");
     });
 
-    if (retryButton) {
-      retryButton.addEventListener("click", function () { loadApp(true); });
-    }
+    if (retryButton) retryButton.addEventListener("click", function () { loadApp(true); });
 
     root.addEventListener("message", onMessage, false);
     root.addEventListener("keydown", onKeyDown, true);
@@ -186,10 +185,14 @@
 
     startReadyTimeout();
     focusFrame();
+    root.setTimeout(function () {
+      if (!ready && navigator.onLine !== false) markReady();
+    }, 3500);
   }
 
   root.GateWebOSBoot = Object.freeze({
     platform: PLATFORM,
+    uiPlatform: UI_PLATFORM,
     version: SHELL_VERSION,
     launchUrl: buildLaunchUrl,
     reload: function () { loadApp(true); },
