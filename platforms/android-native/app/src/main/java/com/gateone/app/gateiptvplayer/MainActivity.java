@@ -74,7 +74,7 @@ import java.util.Map;
 @OptIn(markerClass = UnstableApi.class)
 public final class MainActivity extends Activity {
     private static final String HOME = "https://gate-iptv-player-production.up.railway.app/";
-    private static final String APP_VERSION = "0.6.4";
+    private static final String APP_VERSION = "0.6.5";
     private static final String USER_AGENT = "GATE-TV-NATIVE/" + APP_VERSION;
     static final String PREFERENCES = "gate_tv_preferences";
     static final String PREFERENCE_AUTO_START = "auto_start_on_boot";

@@ -44,7 +44,7 @@ if [ -z "$PACKAGE_PATH" ]; then
   exit 1
 fi
 
-TARGET_PATH="$OUTPUT_DIR/GATE-TV-Tizen-0.6.4.wgt"
+TARGET_PATH="$OUTPUT_DIR/GATE-TV-Tizen-0.6.5.wgt"
 if [ "$PACKAGE_PATH" != "$TARGET_PATH" ]; then
   mv "$PACKAGE_PATH" "$TARGET_PATH"
 fi

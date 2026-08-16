@@ -2,7 +2,7 @@
   "use strict";
 
   var STYLE_ID = "gate-ui-polish-2";
-  var STYLE_URL = "/ui-polish.css?v=0.6.4";
+  var STYLE_URL = "/ui-polish.css?v=0.6.5";
 
   function ensurePolishStyle() {
     if (document.getElementById(STYLE_ID)) return;
@@ -210,9 +210,9 @@
 
   document.addEventListener("keydown", function (event) {
     var code = Number(event.keyCode || event.which || 0);
-    if ([13, 37, 38, 39, 40, 461, 10009].indexOf(code) >= 0 ||
+    if ([13, 461, 10009].indexOf(code) >= 0 ||
         event.key === "Enter" || event.key === "BrowserBack" || event.key === "Escape") {
-      showHint(1700);
+      showHint(1200);
     }
   }, false);
 
@@ -230,9 +230,13 @@
   var observer = new MutationObserver(function () { scheduleSync(75); });
   observer.observe(document.body, {
     childList: true,
-    subtree: true,
-    attributes: true,
-    attributeFilter: ["class", "disabled"]
+    subtree: true
+  });
+
+  var stateObserver = new MutationObserver(function () { scheduleSync(40); });
+  ["ad-overlay", "player-modal", "details-modal", "tv-settings-modal", "pairing-modal", "source-modal"].forEach(function (id) {
+    var node = document.getElementById(id);
+    if (node) stateObserver.observe(node, { attributes: true, attributeFilter: ["class"] });
   });
 
   window.addEventListener("popstate", function () { scheduleSync(30); });

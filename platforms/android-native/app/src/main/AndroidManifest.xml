@@ -4,7 +4,7 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-feature android:name="android.software.leanback" android:required="false" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
-    <application android:allowBackup="false" android:banner="@drawable/tv_banner" android:hardwareAccelerated="true" android:label="GATE TV" android:largeHeap="true" android:usesCleartextTraffic="true" android:theme="@style/GateTheme">
+    <application android:allowBackup="false" android:banner="@drawable/tv_banner" android:hardwareAccelerated="true" android:icon="@drawable/gate_icon" android:label="GATE TV" android:largeHeap="true" android:logo="@drawable/gate_icon" android:roundIcon="@drawable/gate_icon" android:usesCleartextTraffic="true" android:theme="@style/GateTheme">
         <activity android:name=".MainActivity" android:configChanges="orientation|screenSize|keyboardHidden" android:exported="true" android:screenOrientation="unspecified">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

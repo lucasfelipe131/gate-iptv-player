@@ -18,8 +18,27 @@ test("seleção de conteúdo usa a largura total e mantém uma volta clara", () 
   assert.match(app, /class="round-action browse-back focusable" data-action="go-home"/);
   assert.match(polish, /catalog-focus-view \.sidebar \{ display: none !important; \}/);
   assert.match(polish, /catalog-focus-view \.app-shell \{ grid-template-columns: minmax\(0, 1fr\); \}/);
-  assert.match(polish, /catalog-focus-view \.live-layout[\s\S]*240px 650px/);
-  assert.match(polish, /min-width:\s*2500px[\s\S]*catalog-focus-view \.live-layout[\s\S]*390px 920px/);
+  assert.match(polish, /Remote-first correction[\s\S]*catalog-focus-view \.live-layout[\s\S]*210px 500px/);
+  assert.match(polish, /Remote-first correction[\s\S]*min-width:\s*2500px[\s\S]*catalog-focus-view \.live-layout[\s\S]*310px 680px/);
+});
+
+test("painel inicial mantém o desenho anterior aprovado", () => {
+  assert.match(polish, /\.account-strip \{[\s\S]*width: min\(980px, 100%\)[\s\S]*border-radius: 18px/);
+  assert.match(polish, /\.library-launchers \{[\s\S]*width: min\(1240px, 100%\)[\s\S]*grid-template-columns: repeat\(2/);
+  assert.match(polish, /\.library-launch \{[\s\S]*min-height: 210px[\s\S]*border-radius: 22px/);
+  const remoteCorrection = polish.split("Remote-first correction")[1] || "";
+  assert.doesNotMatch(remoteCorrection, /library-launchers[\s\S]{0,120}width:/);
+  assert.doesNotMatch(remoteCorrection, /library-launch,[\s\S]{0,120}account-strip[\s\S]{0,120}border-radius:/);
+});
+
+test("controle usa rotas fixas, rolagem imediata e atualização leve", () => {
+  assert.match(app, /function moveLiveFocus\(active, direction\)/);
+  assert.match(app, /window\.GateRemoteNavigation/);
+  assert.match(app, /scrollIntoView\(\{ behavior: "auto"/);
+  assert.match(app, /focusedEpgTimer = setTimeout/);
+  assert.match(app, /abrEwmaDefaultEstimate:[\s\S]*1_500_000/);
+  assert.match(polish, /Remote-first correction[\s\S]*transition: none !important/);
+  assert.match(polish, /live-channel-row[\s\S]*border-radius: 0/);
 });
 
 test("QR fica na home ou dentro de configurações e não polui a barra lateral", () => {
