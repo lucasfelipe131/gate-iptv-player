@@ -9,6 +9,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const html = fs.readFileSync(path.join(root, "public/index.html"), "utf8");
 const appScript = fs.readFileSync(path.join(root, "public/app.js"), "utf8");
 const workerScript = fs.readFileSync(path.join(root, "public/sw.js"), "utf8");
+const serverScript = fs.readFileSync(path.join(root, "server.mjs"), "utf8");
 
 const reply = (payload, ok = true) => ({ ok, json: async () => payload });
 
@@ -88,11 +89,81 @@ test("service worker nunca intercepta nem armazena streams e APIs ao vivo", () =
   assert.doesNotMatch(workerScript, /gate-player-v12/);
 });
 
+test("limita tickets temporários de segmentos HLS para conter memória do servidor", () => {
+  assert.match(serverScript, /HLS_TICKET_TTL = 30 \* 60 \* 1000/);
+  assert.match(serverScript, /MAX_STREAM_TICKETS = 50_000/);
+  assert.match(serverScript, /kind === "hls" \? HLS_TICKET_TTL : SESSION_TTL/);
+  assert.match(serverScript, /registerStream\(new URL\(line, baseUrl\)\.toString\(\), "hls"\)/);
+  assert.match(serverScript, /while \(streamTickets\.size >= MAX_STREAM_TICKETS\)/);
+  assert.match(serverScript, /if \(streamTickets\.size >= MAX_STREAM_TICKETS\) pruneStreamTickets\(now\)/);
+  assert.match(serverScript, /streamTickets\.delete\(normalizedToken\);[^]*streamTickets\.set\(normalizedToken, entry\)/);
+});
+
 test("usa reservas maiores e não encerra o canal quando todas as rotas oscilam", () => {
   assert.match(appScript, /stashInitialSize: session\.preview \? 1024 \* 1024 : 3 \* 1024 \* 1024/);
   assert.match(appScript, /maxBufferLength: preview \? Math\.min\(20, buffer\.target\) : buffer\.target/);
   assert.match(appScript, /starvationLimit = preview \? 15_000 : 22_000/);
   assert.match(appScript, /Mantendo o canal aberto e procurando uma rota estável/);
+});
+
+test("detecta quadros congelados mesmo com o relógio avançando e recria a superfície", async () => {
+  const dom = new JSDOM(html, {
+    url: "https://gate.test/",
+    runScripts: "outside-only",
+    pretendToBeVisual: true
+  });
+  const { window } = dom;
+  window.sessionStorage.setItem("gate.adShown", "true");
+  window.fetch = async () => reply({ annualPrice: 30, adDurationSeconds: 10 });
+  window.HTMLMediaElement.prototype.play = async () => {};
+  window.HTMLMediaElement.prototype.pause = () => {};
+  window.HTMLMediaElement.prototype.load = () => {};
+
+  let now = 10_000;
+  let renderedFrames = 1;
+  let watchdog = null;
+  window.Date.now = () => now;
+  window.setInterval = (callback) => { watchdog = callback; return 1; };
+  window.clearInterval = () => {};
+  window.HTMLVideoElement.prototype.getVideoPlaybackQuality = () => ({ totalVideoFrames: renderedFrames });
+
+  window.eval(`${appScript}\nwindow.__gatePlaybackTest = { startWebPlayback, state };`);
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  const original = window.document.querySelector("#video-player");
+  Object.defineProperty(original, "paused", { configurable: true, get: () => false });
+  Object.defineProperty(original, "readyState", { configurable: true, get: () => 4 });
+  Object.defineProperty(original, "currentTime", { configurable: true, writable: true, value: 0 });
+
+  window.__gatePlaybackTest.startWebPlayback(original, {
+    playUrl: "/api/stream/black-frame-token",
+    streamType: "video",
+    live: true
+  });
+  original.dispatchEvent(new window.Event("playing"));
+  watchdog();
+  assert.equal(window.__gatePlaybackTest.state.webPlayer.videoFramesSeen, true);
+
+  now += 21_000;
+  original.currentTime = 21;
+  original.dispatchEvent(new window.Event("timeupdate"));
+  watchdog();
+
+  const replacement = window.document.querySelector("#video-player");
+  assert.notEqual(replacement, original, "uma tela preta deve receber uma nova superfície de vídeo");
+  assert.equal(original.isConnected, false);
+  assert.equal(window.__gatePlaybackTest.state.webPlayer.media, replacement);
+  assert.equal(window.__gatePlaybackTest.state.webPlayer.surfaceResetCount, 1);
+  renderedFrames += 1;
+  dom.window.close();
+});
+
+test("callbacks atrasados ficam presos à geração da tentativa atual", () => {
+  assert.match(appScript, /function isCurrentWebAttempt\(session, attempt\)/);
+  assert.match(appScript, /session\.attempt !== attempt/);
+  assert.match(appScript, /session\.hls === hls/);
+  assert.match(appScript, /freshPlaybackUrl\(candidate\.url/);
+  assert.match(appScript, /session\.lastPlayAttemptAt = 0;[^]*startVideoFrameMonitor\(session\);[^]*playbackStatus/);
+  assert.match(appScript, /for \(const timer of session\.timers/);
 });
 
 test("reconecta quando um servidor encerra silenciosamente o fluxo depois de já iniciado", () => {

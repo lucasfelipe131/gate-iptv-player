@@ -189,5 +189,5 @@
   window.addEventListener("pageshow", function () { scheduleFocus(160); });
   window.addEventListener("load", function () { scheduleFocus(180); });
   scheduleFocus(180);
-  window.GateWebOSRemote = { version: "safe-1.0.0", ensureFocus: ensureFocus, moveFocus: move };
+  window.GateWebOSRemote = { version: "safe-1.1.0", ensureFocus: ensureFocus, moveFocus: move };
 }());

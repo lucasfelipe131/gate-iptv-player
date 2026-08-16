@@ -9,6 +9,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const script = fs.readFileSync(path.join(root, "public/platform-player.js"), "utf8");
 const html = fs.readFileSync(path.join(root, "public/index.html"), "utf8");
 const loader = fs.readFileSync(path.join(root, "public/tizen-loader.js"), "utf8");
+const styles = fs.readFileSync(path.join(root, "public/ui-polish.css"), "utf8");
 
 test("carrega o adaptador de plataforma antes do núcleo compartilhado", () => {
   assert.match(loader, /\$WEBAPIS\/webapis\/webapis\.js/);
@@ -23,6 +24,13 @@ test("Tizen usa AVPlay e recupera fim ou congelamento sem sair do canal", () => 
   assert.match(script, /STALL_TIMEOUT_MS = 18_000/);
   assert.match(script, /avplay\.prepareAsync/);
   assert.match(script, /PLAYER_DISPLAY_MODE_LETTER_BOX/);
+  assert.match(script, /application\/avplayer/);
+  assert.match(script, /BUFFER_TIMEOUT_MS = 16_000/);
+  assert.match(script, /value !== target\.lastBufferPercent/);
+  assert.match(script, /freshUrl\(sourceUrl, attempt\)/);
+  assert.match(script, /GATE-TV-TIZEN\/0\.6\.2/);
+  assert.match(script, /zIndex: "0"/);
+  assert.match(styles, /data-tv-platform="tizen"[^}]*body\.native-player \.live-preview-panel[^}]*background: transparent/);
 });
 
 test("Tizen mantém rotas primária e reserva com tentativas limitadas", () => {

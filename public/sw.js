@@ -1,21 +1,21 @@
 const CACHE_PREFIX = "gate-player-";
-const CACHE = "gate-player-v19-tv-ui-2-1-direct";
+const CACHE = "gate-player-v20-stability-layout-0-6-2";
 const ASSETS = [
   "/",
-  "/styles.css?v=0.6.1-web",
-  "/webos.css?v=1.0.2",
-  "/pro-ui.css?v=1.0.0",
-  "/web-ui.css?v=2.0.0",
-  "/ui-polish.css?v=2.1.0",
-  "/app.js?v=0.6.1-web",
-  "/tizen-loader.js?v=0.6.0",
-  "/platform-player.js?v=0.6.0",
-  "/webos-remote.js?v=1.0.2",
-  "/pro-ui.js?v=2.1.0",
+  "/styles.css?v=0.6.2",
+  "/webos.css?v=0.6.2",
+  "/pro-ui.css?v=0.6.2",
+  "/web-ui.css?v=0.6.2",
+  "/ui-polish.css?v=0.6.2",
+  "/app.js?v=0.6.2",
+  "/tizen-loader.js?v=0.6.2",
+  "/platform-player.js?v=0.6.2",
+  "/webos-remote.js?v=0.6.2",
+  "/pro-ui.js?v=0.6.2",
   "/gate-icon.svg",
   "/manifest.webmanifest",
-  "/vendor/hls.min.js?v=0.6.0",
-  "/vendor/mpegts.min.js?v=0.6.0"
+  "/vendor/hls.min.js?v=0.6.2",
+  "/vendor/mpegts.min.js?v=0.6.2"
 ];
 self.addEventListener("install", (event) => event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(ASSETS)).then(() => self.skipWaiting())));
 self.addEventListener("activate", (event) => event.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((key) => key.startsWith(CACHE_PREFIX) && key !== CACHE).map((key) => caches.delete(key)))).then(() => self.clients.claim())));

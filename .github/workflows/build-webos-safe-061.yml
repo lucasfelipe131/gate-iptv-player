@@ -1,10 +1,19 @@
-name: Build LG webOS Safe Mode 0.6.1
+name: Build LG webOS Safe Mode 0.6.2
 
 on:
   push:
     branches: [main]
     paths:
       - '.github/workflows/build-webos-safe-061.yml'
+      - 'platforms/webos/**'
+      - 'platforms/lg-webos/assets/**'
+      - 'public/index-webos.html'
+      - 'public/platform-player.js'
+      - 'public/webos-safe-*.js'
+      - 'public/webos-safe.css'
+      - 'scripts/package-webos.sh'
+      - 'server.mjs'
+      - 'test/webos-safe-mode.test.mjs'
   workflow_dispatch:
 
 permissions:
@@ -32,7 +41,7 @@ jobs:
           npm test
           node --check public/webos-safe-bootstrap.js
           node --check public/webos-remote-safe.js
-          node -e "const x=JSON.parse(require('fs').readFileSync('platforms/webos/appinfo.json','utf8')); if(x.version!=='0.6.1') process.exit(1)"
+          node -e "const x=JSON.parse(require('fs').readFileSync('platforms/webos/appinfo.json','utf8')); if(x.version!=='0.6.2') process.exit(1)"
 
       - name: Install LG webOS CLI
         run: npm install -g @webos-tools/cli
@@ -41,12 +50,12 @@ jobs:
         run: |
           sh scripts/package-webos.sh
           ls -lh dist/webos
-          test -n "$(find dist/webos -maxdepth 1 -name '*0.6.1*.ipk' -print -quit)"
+          test -n "$(find dist/webos -maxdepth 1 -name '*0.6.2*.ipk' -print -quit)"
 
       - name: Upload definitive LG package
         uses: actions/upload-artifact@v4
         with:
-          name: GATE-IPTV-PLAYER-LG-webOS-0.6.1-safe
+          name: GATE-IPTV-PLAYER-LG-webOS-0.6.2-safe
           path: dist/webos/*.ipk
           if-no-files-found: error
           compression-level: 0

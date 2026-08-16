@@ -2,306 +2,293 @@
   "use strict";
 
   var PLATFORM = "webos";
-  var SHELL_VERSION = "0.6.1";
+  var SHELL_VERSION = "0.6.2";
   var APP_ORIGIN = "https://gate-iptv-player-production.up.railway.app";
   var APP_URL = APP_ORIGIN + "/";
-  var WATCHDOG_INTERVAL_MS = 3000;
-  var STALL_LIMIT_MS = 15000;
-  var MAX_RECOVERIES = 5;
-  var state = {
-    source: null,
-    video: null,
-    provider: null,
-    watchdog: null,
-    recoveryTimer: null,
-    recoveryCount: 0,
-    lastProgressAt: 0,
-    lastTime: -1,
-    playing: false
-  };
+  var START_TIMEOUT_MS = 30000;
+  var STALL_TIMEOUT_MS = 18000;
+  var FRAME_TIMEOUT_MS = 20000;
+  var WATCHDOG_INTERVAL_MS = 2000;
+  var session = null;
+  var watchdog = null;
+  var generation = 0;
+  var refreshSerial = 0;
+  var appFrame = null;
 
-  var remoteKeys = {
-    BACK: 461,
-    ENTER: 13,
-    LEFT: 37,
-    UP: 38,
-    RIGHT: 39,
-    DOWN: 40,
-    PLAY: 415,
-    PAUSE: 19,
-    STOP: 413,
-    REWIND: 412,
-    FAST_FORWARD: 417,
-    CHANNEL_UP: 33,
-    CHANNEL_DOWN: 34
-  };
-
-  function emit(name, detail) {
-    var event;
-    try {
-      event = new CustomEvent("gate:" + name, { detail: detail || {} });
-    } catch (_error) {
-      event = document.createEvent("CustomEvent");
-      event.initCustomEvent("gate:" + name, false, false, detail || {});
-    }
-    root.dispatchEvent(event);
-  }
-
-  function safeMediaUrl(value) {
-    var parsed;
-    try { parsed = new URL(String(value || ""), root.location.href); } catch (_error) { return ""; }
-    if (["http:", "https:", "blob:"].indexOf(parsed.protocol) === -1) return "";
-    return parsed.href;
-  }
+  function now() { return Date.now(); }
 
   function buildLaunchUrl() {
     var target = new URL(APP_URL);
     target.searchParams.set("platform", PLATFORM);
     target.searchParams.set("shellVersion", SHELL_VERSION);
-    target.searchParams.set("nativePlayer", "webos-watchdog");
+    target.searchParams.set("nativePlayer", "parent-webos");
     target.searchParams.set("safe", "1");
-    target.searchParams.set("revision", "0.6.1");
+    target.searchParams.set("revision", SHELL_VERSION);
+    target.searchParams.set("appVersion", SHELL_VERSION);
     return target.href;
   }
 
-  function getVideo() {
-    if (state.video) return state.video;
-    var video = document.createElement("video");
-    video.id = "gate-native-surface";
-    video.setAttribute("playsinline", "");
-    video.setAttribute("webkit-playsinline", "");
-    document.body.appendChild(video);
-    video.addEventListener("playing", function () {
-      state.playing = true;
-      state.lastProgressAt = Date.now();
-      state.recoveryCount = 0;
-      emit("player-playing", { platform: PLATFORM });
-    });
-    video.addEventListener("timeupdate", markProgress);
-    video.addEventListener("progress", markProgress);
-    video.addEventListener("waiting", function () { scheduleRecovery("waiting"); });
-    video.addEventListener("stalled", function () { scheduleRecovery("stalled"); });
-    video.addEventListener("error", function () { scheduleRecovery("media-error", true); });
-    video.addEventListener("ended", function () {
-      if (state.source && state.source.live !== false) scheduleRecovery("unexpected-ended", true);
-      else emit("player-completed", { platform: PLATFORM });
-    });
-    state.video = video;
-    return video;
+  function postHook(eventName, value) {
+    if (!appFrame || !appFrame.contentWindow) return;
+    try {
+      appFrame.contentWindow.postMessage({ channel: "gate-native-hooks", event: eventName, value: value || "" }, APP_ORIGIN);
+    } catch (_error) { /* iframe not ready yet */ }
   }
 
-  function markProgress() {
-    var video = state.video;
-    if (!video) return;
-    if (video.currentTime !== state.lastTime) {
-      state.lastTime = video.currentTime;
-      state.lastProgressAt = Date.now();
+  function validUrl(value) {
+    try {
+      var url = new URL(String(value || ""), APP_URL);
+      return url.protocol === "http:" || url.protocol === "https:" ? url.href : "";
+    } catch (_error) { return ""; }
+  }
+
+  function freshUrl(value, attempt) {
+    try {
+      var url = new URL(value, APP_URL);
+      if (url.origin === APP_ORIGIN && /^\/api\/stream\//.test(url.pathname)) {
+        url.searchParams.set("direct", "1");
+        url.searchParams.set("_gate_refresh", String(++refreshSerial) + "-" + String(attempt));
+      }
+      return url.href;
+    } catch (_error) { return value; }
+  }
+
+  function isActive(target, attempt) {
+    return Boolean(target && session === target && target.generation === generation && !target.closed
+      && (attempt == null || target.attempt === attempt));
+  }
+
+  function clearRetry(target) {
+    if (target && target.retryTimer) root.clearTimeout(target.retryTimer);
+    if (target) target.retryTimer = null;
+  }
+
+  function removeSurface() {
+    var surface = document.getElementById("gate-native-surface");
+    if (!surface) return;
+    if (session && session.surface === surface) session.surface = null;
+    try { surface.pause(); } catch (_error) {}
+    surface.removeAttribute("src");
+    try { surface.load(); } catch (_error2) {}
+    if (surface.parentNode) surface.parentNode.removeChild(surface);
+  }
+
+  function applyBounds(target, surface) {
+    var bounds = target.fullscreen ? null : target.bounds;
+    surface.style.left = bounds ? Math.max(0, Number(bounds.x) || 0) + "px" : "0";
+    surface.style.top = bounds ? Math.max(0, Number(bounds.y) || 0) + "px" : "0";
+    surface.style.width = bounds ? Math.max(1, Number(bounds.width) || 1) + "px" : "100%";
+    surface.style.height = bounds ? Math.max(1, Number(bounds.height) || 1) + "px" : "100%";
+  }
+
+  function sampleFrames(target, surface) {
+    var frames = NaN;
+    try {
+      var quality = surface.getVideoPlaybackQuality && surface.getVideoPlaybackQuality();
+      if (quality) frames = Number(quality.totalVideoFrames);
+    } catch (_error) {}
+    if (!isFinite(frames)) frames = Number(surface.webkitDecodedFrameCount);
+    if (!isFinite(frames) || frames < 0) return;
+    target.frameMonitoring = true;
+    if (frames > target.lastFrameCount) {
+      target.lastFrameCount = frames;
+      target.framesSeen = frames > 0;
+      target.lastFrameAt = now();
     }
   }
 
-  function startWatchdog() {
-    stopWatchdog();
-    state.lastProgressAt = Date.now();
-    state.watchdog = root.setInterval(function () {
-      if (!state.source || document.hidden) return;
-      if (state.provider && typeof state.provider.getProgress === "function") {
-        Promise.resolve(state.provider.getProgress()).then(function (progress) {
-          if (Number(progress) !== state.lastTime) {
-            state.lastTime = Number(progress);
-            state.lastProgressAt = Date.now();
-          } else if (state.playing && Date.now() - state.lastProgressAt >= STALL_LIMIT_MS) {
-            scheduleRecovery("native-watchdog", true);
-          }
-        }).catch(function () { scheduleRecovery("native-watchdog-error", true); });
-        return;
+  function monitorFrames(target, surface, attempt) {
+    if (typeof surface.requestVideoFrameCallback !== "function") return;
+    var callback = function (_timestamp, metadata) {
+      if (!isActive(target, attempt) || target.surface !== surface) return;
+      var frames = Number(metadata && metadata.presentedFrames);
+      target.frameMonitoring = true;
+      if (!isFinite(frames) || frames > target.lastFrameCount) {
+        if (isFinite(frames)) target.lastFrameCount = frames;
+        target.framesSeen = true;
+        target.lastFrameAt = now();
       }
-      markProgress();
-      if (state.video && !state.video.paused && Date.now() - state.lastProgressAt >= STALL_LIMIT_MS) {
-        scheduleRecovery("html5-watchdog", true);
-      }
+      target.frameCallbackId = surface.requestVideoFrameCallback(callback);
+    };
+    target.frameCallbackId = surface.requestVideoFrameCallback(callback);
+  }
+
+  function markClock(target, surface) {
+    var value = Number(surface.currentTime);
+    if (isFinite(value) && value !== target.lastTime) {
+      target.lastTime = value;
+      target.lastProgressAt = now();
+    }
+  }
+
+  function openCurrent(target, reason) {
+    if (!isActive(target)) return;
+    clearRetry(target);
+    removeSurface();
+    var route = target.urls[target.routeIndex];
+    if (!route) return retry(target, reason || "Rota vazia", true);
+    var attempt = ++target.attempt;
+    var source = freshUrl(route, attempt);
+    var surface = document.createElement("video");
+    surface.id = "gate-native-surface";
+    surface.autoplay = true;
+    surface.playsInline = true;
+    surface.setAttribute("playsinline", "");
+    surface.setAttribute("webkit-playsinline", "");
+    target.surface = surface;
+    target.started = false;
+    target.startedAt = 0;
+    target.lastTime = -1;
+    target.lastProgressAt = now();
+    target.lastFrameAt = 0;
+    target.lastFrameCount = -1;
+    target.framesSeen = false;
+    target.frameMonitoring = false;
+    target.bufferingAt = 0;
+    applyBounds(target, surface);
+    document.body.appendChild(surface);
+
+    surface.addEventListener("playing", function () {
+      if (!isActive(target, attempt)) return;
+      target.started = true;
+      target.startedAt = target.startedAt || now();
+      target.bufferingAt = 0;
+      target.lastProgressAt = now();
+      target.routeRetries = 0;
+      target.round = 0;
+      postHook("engine", "LG webOS · vídeo nativo");
+    });
+    surface.addEventListener("timeupdate", function () { if (isActive(target, attempt)) markClock(target, surface); });
+    surface.addEventListener("waiting", function () { if (isActive(target, attempt) && !target.bufferingAt) target.bufferingAt = now(); });
+    surface.addEventListener("canplay", function () { if (isActive(target, attempt)) target.bufferingAt = 0; });
+    surface.addEventListener("stalled", function () { if (isActive(target, attempt) && !target.bufferingAt) target.bufferingAt = now(); });
+    surface.addEventListener("error", function () { if (isActive(target, attempt)) retry(target, "A TV perdeu o sinal", true); });
+    surface.addEventListener("ended", function () {
+      if (!isActive(target, attempt)) return;
+      if (target.live) retry(target, "A transmissão encerrou", false);
+      else closePlayer();
+    });
+    monitorFrames(target, surface, attempt);
+    surface.src = source;
+    try { surface.load(); } catch (_error) {}
+    try {
+      var promise = surface.play();
+      if (promise && typeof promise.catch === "function") promise.catch(function () { if (isActive(target, attempt)) retry(target, "A reprodução não iniciou", false); });
+    } catch (_error2) { retry(target, "A TV recusou o vídeo", true); }
+  }
+
+  function retry(target, message, rotate) {
+    if (!isActive(target) || target.switching) return;
+    target.switching = true;
+    clearRetry(target);
+    removeSurface();
+    if (rotate || target.routeRetries >= 1) {
+      target.routeIndex = (target.routeIndex + 1) % target.urls.length;
+      target.routeRetries = 0;
+      if (target.routeIndex === 0) target.round += 1;
+    } else {
+      target.routeRetries += 1;
+    }
+    postHook("engine", "LG webOS · reconectando");
+    var delay = Math.min(12000, 700 + target.round * 1200);
+    target.retryTimer = root.setTimeout(function () {
+      target.retryTimer = null;
+      if (!isActive(target)) return;
+      target.switching = false;
+      openCurrent(target, message);
+    }, delay);
+  }
+
+  function startWatchdog(target) {
+    if (watchdog) root.clearInterval(watchdog);
+    watchdog = root.setInterval(function () {
+      if (!isActive(target) || target.switching || document.hidden || !target.surface) return;
+      var current = now();
+      var surface = target.surface;
+      markClock(target, surface);
+      sampleFrames(target, surface);
+      var videoExpected = Number(surface.videoWidth) > 0 || Number(surface.videoHeight) > 0;
+      if (!target.started && current - target.lastProgressAt > START_TIMEOUT_MS) retry(target, "O canal demorou para iniciar", true);
+      else if (target.bufferingAt && current - target.bufferingAt > STALL_TIMEOUT_MS) retry(target, "O buffer ficou parado", false);
+      else if (target.started && videoExpected && target.frameMonitoring && !target.framesSeen && current - target.startedAt > FRAME_TIMEOUT_MS) retry(target, "O áudio iniciou sem imagem", false);
+      else if (target.framesSeen && current - target.lastFrameAt > FRAME_TIMEOUT_MS) retry(target, "A imagem parou", false);
+      else if (target.started && current - target.lastProgressAt > STALL_TIMEOUT_MS) retry(target, "O sinal parou de avançar", false);
+      else if (target.started && surface.paused) { try { surface.play(); } catch (_error) {} }
     }, WATCHDOG_INTERVAL_MS);
   }
 
-  function stopWatchdog() {
-    if (state.watchdog) root.clearInterval(state.watchdog);
-    state.watchdog = null;
-  }
-
-  function scheduleRecovery(reason, immediate) {
-    if (!state.source || state.recoveryTimer) return;
-    if (state.recoveryCount >= MAX_RECOVERIES) {
-      stopWatchdog();
-      emit("player-fatal", { platform: PLATFORM, reason: "recovery-limit" });
+  function startPlayer(payload, fullscreen) {
+    var urls = [validUrl(payload.url), validUrl(payload.fallbackUrl)].filter(function (value, index, list) { return value && list.indexOf(value) === index; });
+    if (!urls.length) return;
+    var bounds = fullscreen ? null : { x: payload.x, y: payload.y, width: payload.width, height: payload.height };
+    if (session && !session.closed && session.urls[0] === urls[0]) {
+      session.fullscreen = fullscreen;
+      session.bounds = bounds || session.bounds;
+      session.live = String(payload.streamType || "").toLowerCase() !== "video";
+      if (session.surface) applyBounds(session, session.surface);
       return;
     }
-    var wait = immediate ? 150 : Math.min(1000 * Math.pow(2, state.recoveryCount), 8000);
-    state.recoveryTimer = root.setTimeout(function () {
-      state.recoveryTimer = null;
-      recover(reason);
-    }, wait);
-  }
-
-  function recover(reason) {
-    var source = state.source;
-    if (!source) return Promise.resolve(false);
-    state.recoveryCount += 1;
-    state.lastProgressAt = Date.now();
-    emit("player-recovering", {
-      platform: PLATFORM,
-      reason: reason,
-      attempt: state.recoveryCount
-    });
-    if (state.provider && typeof state.provider.recover === "function") {
-      return Promise.resolve(state.provider.recover(source)).then(function () { return true; }).catch(function () {
-        scheduleRecovery("native-recovery-failed");
-        return false;
-      });
-    }
-    return playHtml5(source, true);
-  }
-
-  function playHtml5(source, recovering) {
-    var video = getVideo();
-    var resumeAt = recovering && source.live === false ? Number(video.currentTime || 0) : 0;
-    try {
-      video.pause();
-      video.removeAttribute("src");
-      video.load();
-      video.src = source.src;
-      video.load();
-      if (resumeAt > 0) {
-        video.addEventListener("loadedmetadata", function restorePosition() {
-          video.removeEventListener("loadedmetadata", restorePosition);
-          try { video.currentTime = resumeAt; } catch (_error) { /* unsupported seek */ }
-        });
-      }
-      var promise = video.play();
-      if (promise && typeof promise.then === "function") {
-        return promise.then(function () { return true; }).catch(function () {
-          scheduleRecovery("play-rejected");
-          return false;
-        });
-      }
-      return Promise.resolve(true);
-    } catch (_error) {
-      scheduleRecovery("html5-exception");
-      return Promise.resolve(false);
-    }
-  }
-
-  function play(payload) {
-    var input = payload || {};
-    var src = safeMediaUrl(input.src);
-    if (!src) return Promise.reject(new Error("Fonte de midia invalida."));
-    state.source = {
-      src: src,
-      live: input.live !== false,
-      mimeType: String(input.mimeType || "").slice(0, 100),
-      rect: input.rect || null
+    closePlayer(false);
+    generation += 1;
+    var target = session = {
+      generation: generation, urls: urls, routeIndex: 0, routeRetries: 0, round: 0, attempt: 0,
+      retryTimer: null, switching: false, closed: false, fullscreen: fullscreen, bounds: bounds,
+      live: String(payload.streamType || "").toLowerCase() !== "video", surface: null,
+      started: false, lastProgressAt: now()
     };
-    state.recoveryCount = 0;
-    state.lastTime = -1;
-    state.lastProgressAt = Date.now();
-    startWatchdog();
-    if (state.provider && typeof state.provider.play === "function") {
-      return Promise.resolve(state.provider.play(state.source));
-    }
-    return playHtml5(state.source, false);
+    openCurrent(target, "");
+    startWatchdog(target);
   }
 
-  function stop() {
-    stopWatchdog();
-    if (state.recoveryTimer) root.clearTimeout(state.recoveryTimer);
-    state.recoveryTimer = null;
-    state.playing = false;
-    state.source = null;
-    if (state.provider && typeof state.provider.stop === "function") {
-      return Promise.resolve(state.provider.stop());
-    }
-    if (state.video) {
-      state.video.pause();
-      state.video.removeAttribute("src");
-      state.video.load();
-    }
-    return Promise.resolve();
+  function closePlayer(notify) {
+    if (notify == null) notify = true;
+    if (watchdog) root.clearInterval(watchdog);
+    watchdog = null;
+    if (session) { session.closed = true; clearRetry(session); }
+    generation += 1;
+    removeSurface();
+    session = null;
+    if (notify) postHook("closed", "");
   }
 
-  function setNativeProvider(provider) {
-    if (!provider || typeof provider.play !== "function" || typeof provider.stop !== "function") {
-      throw new Error("O provedor nativo deve implementar play() e stop().");
-    }
-    state.provider = provider;
-    emit("native-provider-ready", { platform: PLATFORM });
+  function handleMessage(event) {
+    if (event.origin !== APP_ORIGIN || !appFrame || event.source !== appFrame.contentWindow) return;
+    var data = event.data || {};
+    if (data.channel !== "gate-native-player") return;
+    if (data.action === "preview") startPlayer(data, false);
+    else if (data.action === "playFullscreen") startPlayer(data, true);
+    else if (data.action === "fullscreen" && session) { session.fullscreen = true; if (session.surface) applyBounds(session, session.surface); }
+    else if (data.action === "resizePreview" && session && !session.fullscreen) {
+      session.bounds = { x: data.x, y: data.y, width: data.width, height: data.height };
+      if (session.surface) applyBounds(session, session.surface);
+    } else if (data.action === "close") closePlayer();
   }
 
-  function requestExit() {
-    try { root.close(); } catch (_error) { /* webOS closes the app at platform level */ }
-  }
-
-  function keyName(keyCode) {
-    var name;
-    for (name in remoteKeys) if (remoteKeys[name] === keyCode) return name;
-    return "UNKNOWN";
-  }
-
-  function onKeyDown(event) {
-    var name = keyName(event.keyCode);
-    if (name === "UNKNOWN") return;
-    emit("remote-key", { platform: PLATFORM, key: name, keyCode: event.keyCode });
-    if (name === "BACK" && state.source) {
-      event.preventDefault();
-      stop();
-    }
-  }
-
-  function updateStatus(message) {
-    var status = document.getElementById("status");
-    if (status) status.textContent = message;
-  }
+  function updateStatus(message) { var status = document.getElementById("status"); if (status) status.textContent = message; }
 
   function launch() {
+    var overlay = document.getElementById("connection-state");
     if (!navigator.onLine) {
-      updateStatus("A TV esta sem internet. Verifique a conexao e tente novamente.");
+      if (overlay) overlay.className = "connection-state";
+      updateStatus("A TV está sem internet. Verifique a conexão e tente novamente.");
       return;
     }
     updateStatus("Conectando ao GATE TV…");
-    root.setTimeout(function () { root.location.replace(buildLaunchUrl()); }, 180);
+    appFrame = document.getElementById("gate-app-frame");
+    appFrame.onload = function () { if (overlay) overlay.className = "connection-state hidden"; try { appFrame.focus(); } catch (_error) {} };
+    appFrame.src = buildLaunchUrl();
   }
 
   root.GateWebOSBridge = Object.freeze({
     platform: PLATFORM,
     version: SHELL_VERSION,
-    remoteKeys: Object.freeze(remoteKeys),
-    play: play,
-    stop: stop,
-    recover: function () { return recover("manual"); },
-    setNativeProvider: setNativeProvider,
-    requestExit: requestExit,
-    getState: function () {
-      return {
-        active: Boolean(state.source),
-        playing: state.playing,
-        recoveryCount: state.recoveryCount,
-        nativeProvider: Boolean(state.provider)
-      };
-    }
+    recover: function () { if (session) retry(session, "Recuperação manual", false); },
+    stop: closePlayer,
+    getState: function () { return { active: Boolean(session), generation: generation }; }
   });
 
-  root.addEventListener("keydown", onKeyDown, true);
+  root.addEventListener("message", handleMessage, false);
   root.addEventListener("online", launch);
-  root.addEventListener("offline", function () { updateStatus("A TV esta sem internet."); });
-  document.addEventListener("visibilitychange", function () {
-    if (!document.hidden && state.source) {
-      state.lastProgressAt = Date.now();
-      startWatchdog();
-    }
-  });
-  document.addEventListener("DOMContentLoaded", function () {
-    var retry = document.getElementById("retry");
-    if (retry) {
-      retry.addEventListener("click", launch);
-      retry.focus();
-    }
-    launch();
-  });
+  root.addEventListener("offline", function () { document.getElementById("connection-state").className = "connection-state"; updateStatus("A TV está sem internet."); });
+  document.addEventListener("DOMContentLoaded", function () { document.getElementById("retry").addEventListener("click", launch); launch(); });
 }(window));

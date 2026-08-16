@@ -7,11 +7,11 @@
   <meta name="description" content="GATE IPTV PLAYER — conecte suas próprias fontes autorizadas em Smart TVs." />
   <link rel="icon" href="/gate-icon.svg" />
   <link rel="manifest" href="/manifest.webmanifest" />
-  <link rel="stylesheet" href="/styles.css?v=0.6.1-web" />
-  <link rel="stylesheet" href="/webos.css?v=1.0.2" />
-  <link rel="stylesheet" href="/pro-ui.css?v=1.0.0" />
-  <link rel="stylesheet" href="/web-ui.css?v=2.0.0" />
-  <link id="gate-ui-polish-2" rel="stylesheet" href="/ui-polish.css?v=2.1.0" />
+  <link rel="stylesheet" href="/styles.css?v=0.6.2" />
+  <link rel="stylesheet" href="/webos.css?v=0.6.2" />
+  <link rel="stylesheet" href="/pro-ui.css?v=0.6.2" />
+  <link rel="stylesheet" href="/web-ui.css?v=0.6.2" />
+  <link id="gate-ui-polish-2" rel="stylesheet" href="/ui-polish.css?v=0.6.2" />
   <title>GATE IPTV PLAYER</title>
 </head>
 <body>
@@ -31,6 +31,7 @@
       <div class="sidebar-bottom">
         <button class="nav-item focusable" data-action="open-pairing" data-focusable><span class="nav-icon">▦</span><span>Conectar por QR</span></button>
         <button class="nav-item focusable" data-action="open-source" data-focusable><span class="nav-icon">＋</span><span>Trocar lista</span></button>
+        <button class="nav-item focusable android-tv-only" data-action="open-tv-settings" data-focusable><span class="nav-icon">⚙</span><span>Configurações da TV</span></button>
         <a class="nav-item focusable" href="/assinar" data-link data-focusable><span class="nav-icon">◆</span><span>GATE Premium</span></a>
       </div>
     </aside>
@@ -78,6 +79,21 @@
         <button class="primary-button focusable" data-focusable type="submit">Abrir no player</button>
       </form>
       <div class="form-status" id="source-status" aria-live="polite"></div>
+    </div>
+  </section>
+
+  <section class="modal hidden" id="tv-settings-modal" role="dialog" aria-modal="true" aria-labelledby="tv-settings-title">
+    <div class="modal-card tv-settings-card">
+      <button class="icon-button focusable close-tv-settings" data-focusable aria-label="Fechar">×</button>
+      <p class="eyebrow">CONFIGURAÇÕES DA TV</p>
+      <h2 id="tv-settings-title">Abrir a GATE TV mais rápido</h2>
+      <p class="muted">Ative a inicialização automática para abrir o aplicativo quando a TV Android for ligada. Alguns modelos também exigem liberar a inicialização automática nas configurações do sistema.</p>
+      <button class="tv-setting-toggle focusable" id="autostart-toggle" data-action="toggle-autostart" data-focusable aria-pressed="false">
+        <span class="tv-setting-copy"><strong>Abrir ao ligar a TV</strong><small id="autostart-description">Desativado</small></span>
+        <span class="tv-switch" aria-hidden="true"><i></i></span>
+      </button>
+      <div class="tv-settings-note"><strong>Como usar</strong><span>Ative uma vez e deixe a GATE TV instalada. A opção pode depender das permissões do fabricante da TV.</span></div>
+      <button class="primary-button focusable close-tv-settings-primary" data-focusable>Concluir</button>
     </div>
   </section>
 
@@ -160,12 +176,12 @@
   </section>
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
-  <script src="/vendor/hls.min.js?v=0.6.0"></script>
-  <script src="/vendor/mpegts.min.js?v=0.6.0"></script>
-  <script src="/tizen-loader.js?v=0.6.0"></script>
-  <script src="/platform-player.js?v=0.6.0"></script>
-  <script src="/app.js?v=0.6.1-web"></script>
-  <script src="/webos-remote.js?v=1.0.2"></script>
-  <script src="/pro-ui.js?v=2.1.0"></script>
+  <script src="/vendor/hls.min.js?v=0.6.2"></script>
+  <script src="/vendor/mpegts.min.js?v=0.6.2"></script>
+  <script src="/tizen-loader.js?v=0.6.2"></script>
+  <script src="/platform-player.js?v=0.6.2"></script>
+  <script src="/app.js?v=0.6.2"></script>
+  <script src="/webos-remote.js?v=0.6.2"></script>
+  <script src="/pro-ui.js?v=0.6.2"></script>
 </body>
 </html>

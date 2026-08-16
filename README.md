@@ -1,4 +1,4 @@
-# GATE TV 0.6.0
+# GATE TV 0.6.2
 
 Player multiplataforma para listas e fontes de mídia autorizadas. O GATE TV não
 fornece, hospeda ou vende canais, filmes, séries ou credenciais.
@@ -19,15 +19,17 @@ ativo é `platforms/webos`.
 
 ## O que mudou nesta versão
 
-- recuperação da queda silenciosa que ocorria em torno de cinco minutos;
-- detecção por relógio, buffer, fim inesperado e frames realmente renderizados;
-- reconexão do mesmo canal com backoff, limite de tentativas e isolamento por sessão;
+- detecção de tela preta mesmo quando o áudio e o relógio do stream continuam;
+- recriação da superfície/decoder e reconexão com callbacks isolados por tentativa;
+- recuperação por relógio, buffer, fim inesperado e frames realmente renderizados;
 - buffers menores para evitar pressão de memória em TVs com pouca RAM;
-- renovação segura do ticket de stream, com validade deslizante de 24 horas;
+- limite global e validade curta para tickets de segmentos HLS, evitando crescimento de memória;
 - pareamento da lista por QR Code e código temporário de uso único;
 - página profissional de assinatura anual em `/assinar`;
 - página de assinatura pronta, com cobrança bloqueada até existir ativação persistente;
-- interface reorganizada para controle remoto, toque e navegador;
+- interface Web e TV responsiva de 720p a 4K, com alvos maiores para controle remoto;
+- opção configurável para abrir o APK após a inicialização da Android TV;
+- cache versionado para o APK não manter uma interface antiga;
 - preparação para anúncios VAST/Google IMA, desativados até receber uma tag real.
 
 ## Executar e testar
@@ -71,7 +73,7 @@ As variáveis reservadas para a próxima etapa são:
 - `PAYMENT_RETURN_URL`: origem HTTPS das páginas de retorno;
 - `PUBLIC_APP_URL`: origem pública usada no QR e em links absolutos.
 
-Mesmo com essas variáveis, a versão 0.6.0 não cria cobrança enquanto a etapa de
+Mesmo com essas variáveis, a versão 0.6.2 não cria cobrança enquanto a etapa de
 entitlement estiver pendente. Uma versão destinada à Google Play deve usar um
 flavor com Google Play Billing conforme a política da loja.
 

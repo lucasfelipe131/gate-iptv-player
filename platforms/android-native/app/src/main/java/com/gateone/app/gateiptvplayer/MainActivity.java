@@ -36,6 +36,7 @@ import androidx.media3.common.MediaItem;
 import androidx.media3.common.MimeTypes;
 import androidx.media3.common.PlaybackException;
 import androidx.media3.common.Player;
+import androidx.media3.common.Tracks;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.datasource.DefaultDataSource;
 import androidx.media3.datasource.DefaultHttpDataSource;
@@ -71,7 +72,11 @@ import java.util.Map;
 @OptIn(markerClass = UnstableApi.class)
 public final class MainActivity extends Activity {
     private static final String HOME = "https://gate-iptv-player-production.up.railway.app/";
-    private static final String USER_AGENT = "GATE-TV-NATIVE/0.6.0";
+    private static final String APP_VERSION = "0.6.2";
+    private static final String USER_AGENT = "GATE-TV-NATIVE/" + APP_VERSION;
+    static final String PREFERENCES = "gate_tv_preferences";
+    static final String PREFERENCE_AUTO_START = "auto_start_on_boot";
+    private static final String PREFERENCE_WEB_VERSION = "web_shell_version";
 
     // A frozen live stream must recover quickly, but slow channel starts still
     // need enough time on entry-level TVs and congested Wi-Fi networks.
@@ -79,6 +84,7 @@ public final class MainActivity extends Activity {
     private static final long BUFFER_TIMEOUT_MS = 18_000L;
     private static final long STALL_TIMEOUT_MS = 15_000L;
     private static final long VIDEO_STALL_TIMEOUT_MS = 18_000L;
+    private static final long FIRST_VIDEO_FRAME_TIMEOUT_MS = 20_000L;
     private static final long WATCHDOG_INTERVAL_MS = 1_000L;
     private static final long STABLE_PLAYBACK_WINDOW_MS = 60_000L;
     private static final long RECOVERY_COOLDOWN_MS = 2_000L;
@@ -159,6 +165,7 @@ public final class MainActivity extends Activity {
     private boolean networkAvailable = true;
     private boolean networkCallbackRegistered;
     private boolean videoFramesSeen;
+    private boolean videoTrackExpected;
 
     private int attemptIndex;
     private int retryRound;
@@ -205,13 +212,23 @@ public final class MainActivity extends Activity {
         settings.setMediaPlaybackRequiresUserGesture(false);
         settings.setLoadWithOverviewMode(true);
         settings.setUseWideViewPort(true);
-        settings.setCacheMode(WebSettings.LOAD_DEFAULT);
+        boolean webShellChanged = !APP_VERSION.equals(getSharedPreferences(PREFERENCES, MODE_PRIVATE)
+                .getString(PREFERENCE_WEB_VERSION, ""));
+        settings.setCacheMode(webShellChanged ? WebSettings.LOAD_NO_CACHE : WebSettings.LOAD_DEFAULT);
         settings.setAllowFileAccess(false);
         settings.setAllowContentAccess(false);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
-        settings.setUserAgentString(settings.getUserAgentString() + " GATE-IPTV-PLAYER/0.6.0");
+        settings.setUserAgentString(settings.getUserAgentString() + " GATE-IPTV-PLAYER/" + APP_VERSION);
         catalogue.setWebChromeClient(new WebChromeClient());
-        catalogue.setWebViewClient(new WebViewClient());
+        catalogue.setWebViewClient(new WebViewClient() {
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                getSharedPreferences(PREFERENCES, MODE_PRIVATE).edit()
+                        .putString(PREFERENCE_WEB_VERSION, APP_VERSION)
+                        .apply();
+                view.getSettings().setCacheMode(WebSettings.LOAD_DEFAULT);
+            }
+        });
         catalogue.addJavascriptInterface(new PlayerBridge(), "GateNativePlayer");
         root.addView(catalogue, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -223,18 +240,13 @@ public final class MainActivity extends Activity {
         playerLayer.setClickable(false);
         playerLayer.setFocusable(false);
 
-        vlcView = new VLCVideoLayout(this);
+        vlcView = createVlcView();
         playerLayer.addView(vlcView, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
         ));
 
-        exoView = new PlayerView(this);
-        exoView.setUseController(false);
-        exoView.setKeepContentOnPlayerReset(true);
-        exoView.setShutterBackgroundColor(Color.BLACK);
-        exoView.setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_FIT);
-        exoView.setVisibility(View.GONE);
+        exoView = createExoView();
         playerLayer.addView(exoView, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
@@ -256,7 +268,8 @@ public final class MainActivity extends Activity {
         setContentView(root);
         activityResumed = true;
         registerNetworkMonitor();
-        catalogue.loadUrl(HOME + (isTelevision() ? "?platform=androidtv" : "?platform=android"));
+        catalogue.loadUrl(HOME + (isTelevision() ? "?platform=androidtv" : "?platform=android")
+                + "&appVersion=" + APP_VERSION);
         handler.post(watchdog);
     }
 
@@ -277,6 +290,42 @@ public final class MainActivity extends Activity {
         UiModeManager manager = (UiModeManager) getSystemService(Context.UI_MODE_SERVICE);
         return manager != null
                 && manager.getCurrentModeType() == Configuration.UI_MODE_TYPE_TELEVISION;
+    }
+
+    private PlayerView createExoView() {
+        PlayerView view = new PlayerView(this);
+        view.setUseController(false);
+        view.setKeepContentOnPlayerReset(false);
+        view.setShutterBackgroundColor(Color.BLACK);
+        view.setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_FIT);
+        view.setVisibility(View.GONE);
+        return view;
+    }
+
+    private VLCVideoLayout createVlcView() {
+        VLCVideoLayout view = new VLCVideoLayout(this);
+        view.setVisibility(View.GONE);
+        return view;
+    }
+
+    private void rebuildVlcSurface() {
+        if (vlcView != null) playerLayer.removeView(vlcView);
+        vlcView = createVlcView();
+        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+        );
+        playerLayer.addView(vlcView, 0, params);
+    }
+
+    private void rebuildExoSurface() {
+        if (exoView != null) playerLayer.removeView(exoView);
+        exoView = createExoView();
+        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+        );
+        playerLayer.addView(exoView, Math.min(1, playerLayer.getChildCount()), params);
     }
 
     private final class PlayerBridge {
@@ -331,6 +380,19 @@ public final class MainActivity extends Activity {
         public void close() {
             runOnUiThread(MainActivity.this::closeNativePlayer);
         }
+
+        @JavascriptInterface
+        public boolean isAutoStartEnabled() {
+            return getSharedPreferences(PREFERENCES, MODE_PRIVATE)
+                    .getBoolean(PREFERENCE_AUTO_START, false);
+        }
+
+        @JavascriptInterface
+        public void setAutoStartEnabled(boolean enabled) {
+            getSharedPreferences(PREFERENCES, MODE_PRIVATE).edit()
+                    .putBoolean(PREFERENCE_AUTO_START, enabled)
+                    .apply();
+        }
     }
 
     private void startOrReusePlayback(String primaryUrl, String fallbackUrl, String name,
@@ -367,7 +429,7 @@ public final class MainActivity extends Activity {
                     currentRequest.primaryUrl,
                     currentRequest.fallbackUrl
             ) ? currentRequest.streamType
-                    : "hls".equals(currentRequest.streamType) ? "mpegts" : "auto";
+                    : "auto";
             addAttempts(currentRequest.fallbackUrl, fallbackType);
         }
 
@@ -493,6 +555,7 @@ public final class MainActivity extends Activity {
         long attemptToken = activeAttemptToken;
         playbackStarted = false;
         videoFramesSeen = false;
+        videoTrackExpected = false;
         exoPlaybackState = Player.STATE_IDLE;
         lastExoPosition = C.TIME_UNSET;
         lastVlcTime = -1L;
@@ -551,6 +614,7 @@ public final class MainActivity extends Activity {
 
     private void startExoPlayer(PlaybackAttempt attempt, String playbackUrl,
                                 long sessionId, long attemptToken) {
+        rebuildExoSurface();
         vlcView.setVisibility(View.GONE);
         exoView.setVisibility(View.VISIBLE);
 
@@ -630,6 +694,21 @@ public final class MainActivity extends Activity {
             }
 
             @Override
+            public void onTracksChanged(Tracks tracks) {
+                if (!isCurrentAttempt(sessionId, attemptToken)) return;
+                videoTrackExpected = tracks.isTypeSelected(C.TRACK_TYPE_VIDEO);
+            }
+
+            @Override
+            public void onRenderedFirstFrame() {
+                if (!isCurrentAttempt(sessionId, attemptToken)) return;
+                long now = SystemClock.elapsedRealtime();
+                videoFramesSeen = true;
+                lastRenderedFrameAt = now;
+                recordProgress(now);
+            }
+
+            @Override
             public void onPlayerError(PlaybackException error) {
                 String reason = error.getErrorCodeName();
                 handleEngineFailure(sessionId, attemptToken,
@@ -656,8 +735,10 @@ public final class MainActivity extends Activity {
 
     private void startVlc(PlaybackAttempt attempt, String playbackUrl,
                           long sessionId, long attemptToken) {
+        rebuildVlcSurface();
         exoView.setVisibility(View.GONE);
         vlcView.setVisibility(View.VISIBLE);
+        videoTrackExpected = true;
 
         ArrayList<String> options = new ArrayList<>();
         options.add("--network-caching=" + attempt.networkCacheMs);
@@ -689,9 +770,13 @@ public final class MainActivity extends Activity {
             float buffering = eventType == MediaPlayer.Event.Buffering
                     ? event.getBuffering()
                     : -1f;
+            int videoOutputs = eventType == MediaPlayer.Event.Vout
+                    ? event.getVoutCount()
+                    : -1;
             handler.post(() -> handleVlcEvent(
                     eventType,
                     buffering,
+                    videoOutputs,
                     sessionId,
                     attemptToken
             ));
@@ -699,7 +784,7 @@ public final class MainActivity extends Activity {
         vlcPlayer.play();
     }
 
-    private void handleVlcEvent(int eventType, float buffering,
+    private void handleVlcEvent(int eventType, float buffering, int videoOutputs,
                                 long sessionId, long attemptToken) {
         if (!isCurrentAttempt(sessionId, attemptToken) || vlcPlayer == null) return;
         if (eventType == MediaPlayer.Event.Playing) {
@@ -720,6 +805,16 @@ public final class MainActivity extends Activity {
             } else {
                 if (bufferingSince == 0L) bufferingSince = SystemClock.elapsedRealtime();
                 if (playbackStarted) showState("Sinal oscilando. Recuperando…");
+            }
+        } else if (eventType == MediaPlayer.Event.Vout) {
+            if (videoOutputs > 0) {
+                long now = SystemClock.elapsedRealtime();
+                videoFramesSeen = true;
+                lastRenderedFrameAt = now;
+                recordProgress(now);
+            } else if (playbackStarted && videoFramesSeen) {
+                handleEngineFailure(sessionId, attemptToken,
+                        "O LibVLC perdeu a saída de vídeo.", false);
             }
         } else if (eventType == MediaPlayer.Event.EncounteredError) {
             handleEngineFailure(sessionId, attemptToken, "O LibVLC perdeu o sinal.", false);
@@ -813,7 +908,12 @@ public final class MainActivity extends Activity {
                 } else if (bufferingSince > 0L && now - bufferingSince > BUFFER_TIMEOUT_MS) {
                     handleEngineFailure(sessionId, attemptToken,
                             "O buffer parou de receber dados.", false);
-                } else if (playbackStarted && videoFramesSeen
+                } else if (playbackStarted && videoTrackExpected && !videoFramesSeen
+                        && now - attemptStartedAt > FIRST_VIDEO_FRAME_TIMEOUT_MS) {
+                    handleEngineFailure(sessionId, attemptToken,
+                            "O áudio iniciou, mas a imagem não apareceu.", false);
+                } else if (activeAttempt != null && activeAttempt.engine == Engine.MEDIA3
+                        && playbackStarted && videoFramesSeen
                         && now - lastRenderedFrameAt > VIDEO_STALL_TIMEOUT_MS) {
                     handleEngineFailure(sessionId, attemptToken,
                             "A imagem congelou.", false);
@@ -866,9 +966,9 @@ public final class MainActivity extends Activity {
                 if (lastRenderedFrameAt > lastProgressAt) recordProgress(lastRenderedFrameAt);
             }
         } else if (vlcPlayer != null && vlcPlayer.isPlaying()) {
-            // LibVLC 3.7.5 does not expose a stable rendered-frame counter in its
-            // public Android MediaPlayer API. TimeChanged/getTime plus buffering
-            // events are therefore the safest portable watchdog on API 23 TVs.
+            // LibVLC exposes Vout surface-count changes but no stable per-frame
+            // counter. Vout catches a lost surface; clock and buffering events
+            // cover a stream that stops delivering data.
             long time = vlcPlayer.getTime();
             if (time >= 0L && (lastVlcTime < 0L || Math.abs(time - lastVlcTime) >= 120L)) {
                 lastVlcTime = time;
