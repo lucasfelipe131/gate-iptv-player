@@ -13,12 +13,21 @@ const appGradle = fs.readFileSync(
   path.join(root, "platforms/android-native/app/build.gradle"),
   "utf8"
 );
+const manifest = fs.readFileSync(
+  path.join(root, "platforms/android-native/app/src/main/AndroidManifest.xml"),
+  "utf8"
+);
+const bootReceiver = fs.readFileSync(
+  path.join(root, "platforms/android-native/app/src/main/java/com/gateone/app/gateiptvplayer/BootReceiver.java"),
+  "utf8"
+);
 
-test("publica o motor Android TV como versão 0.6.0 coerente", () => {
-  assert.match(appGradle, /versionCode 60/);
-  assert.match(appGradle, /versionName '0\.6\.0'/);
-  assert.match(source, /GATE-TV-NATIVE\/0\.6\.0/);
-  assert.match(source, /GATE-IPTV-PLAYER\/0\.6\.0/);
+test("publica o motor Android TV como versão 0.6.2 coerente", () => {
+  assert.match(appGradle, /versionCode 62/);
+  assert.match(appGradle, /versionName '0\.6\.2'/);
+  assert.match(source, /APP_VERSION = "0\.6\.2"/);
+  assert.match(source, /GATE-TV-NATIVE\/" \+ APP_VERSION/);
+  assert.match(source, /GATE-IPTV-PLAYER\/" \+ APP_VERSION/);
   assert.doesNotMatch(source, /\.isBlank\(\)/, "isBlank não existe em vários Android TV antigos");
 });
 
@@ -31,6 +40,8 @@ test("prioriza Media3 e só adiciona LibVLC depois dos perfis ExoPlayer", () => 
   assert.match(source, /setEnableDecoderFallback\(true\)/);
   assert.match(source, /MimeTypes\.APPLICATION_M3U8/);
   assert.match(source, /setLiveConfiguration/);
+  assert.match(source, /\? currentRequest\.streamType\s*: "auto"/);
+  assert.doesNotMatch(source, /"hls"\.equals\(currentRequest\.streamType\) \? "mpegts"/);
 });
 
 test("isola callbacks e tarefas atrasadas por canal e tentativa", () => {
@@ -48,14 +59,35 @@ test("detecta congelamento por buffer, relógio e frames de vídeo", () => {
   assert.match(source, /BUFFER_TIMEOUT_MS = 18_000L/);
   assert.match(source, /STALL_TIMEOUT_MS = 15_000L/);
   assert.match(source, /VIDEO_STALL_TIMEOUT_MS = 18_000L/);
+  assert.match(source, /FIRST_VIDEO_FRAME_TIMEOUT_MS = 20_000L/);
   assert.match(source, /WATCHDOG_INTERVAL_MS = 1_000L/);
   assert.match(source, /import androidx\.media3\.exoplayer\.DecoderCounters;/);
   assert.doesNotMatch(source, /import androidx\.media3\.decoder\.DecoderCounters;/);
   assert.match(source, /getVideoDecoderCounters/);
   assert.match(source, /renderedOutputBufferCount/);
   assert.match(source, /videoFramesSeen[\s\S]*lastRenderedFrameAt/);
+  assert.match(source, /onTracksChanged\(Tracks tracks\)/);
+  assert.match(source, /onRenderedFirstFrame\(\)/);
+  assert.match(source, /O áudio iniciou, mas a imagem não apareceu/);
+  assert.match(source, /setKeepContentOnPlayerReset\(false\)/);
+  assert.match(source, /rebuildExoSurface\(\)/);
+  assert.match(source, /rebuildVlcSurface\(\)/);
   assert.match(source, /eventType == MediaPlayer\.Event\.TimeChanged/);
-  assert.match(source, /LibVLC 3\.7\.5 does not expose a stable rendered-frame counter/);
+  assert.match(source, /eventType == MediaPlayer\.Event\.Vout/);
+  assert.match(source, /event\.getVoutCount\(\)/);
+  assert.match(source, /O LibVLC perdeu a saída de vídeo/);
+  assert.match(source, /activeAttempt\.engine == Engine\.MEDIA3/);
+});
+
+test("oferece inicialização automática após o boot sem ativá-la à força", () => {
+  assert.match(manifest, /permission\.RECEIVE_BOOT_COMPLETED/);
+  assert.match(manifest, /android\.intent\.action\.BOOT_COMPLETED/);
+  assert.match(manifest, /android:name="\.BootReceiver"/);
+  assert.match(bootReceiver, /PREFERENCE_AUTO_START/);
+  assert.match(bootReceiver, /getBoolean\(MainActivity\.PREFERENCE_AUTO_START, false\)/);
+  assert.match(bootReceiver, /FLAG_ACTIVITY_NEW_TASK/);
+  assert.match(source, /isAutoStartEnabled\(\)/);
+  assert.match(source, /setAutoStartEnabled\(boolean enabled\)/);
 });
 
 test("renova ticket do mesmo canal sem entrar em loop de player", () => {

@@ -6,10 +6,11 @@ import { fileURLToPath } from "node:url";
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 
-test("webOS has a package manifest, secure hosted launch and recovery watchdog", async () => {
+test("webOS mantém o shell local, vídeo nativo e recuperação ativa", async () => {
   const manifest = JSON.parse(await read("platforms/webos/appinfo.json"));
   const html = await read("platforms/webos/index.html");
   const bridge = await read("platforms/webos/bridge.js");
+  const sharedApp = await read("public/app.js");
   const documentation = await read("platforms/webos/README.md");
 
   assert.equal(manifest.main, "index.html");
@@ -19,14 +20,18 @@ test("webOS has a package manifest, secure hosted launch and recovery watchdog",
   assert.match(documentation, /webOS TV 22 ou superior/);
   assert.match(documentation, /bundle legado transpilado/);
   assert.match(html, /viewport-fit=cover/);
+  assert.match(html, /id="gate-app-frame"/);
   assert.match(html, /bridge\.js/);
   assert.match(bridge, /platform", "webos"|PLATFORM = "webos"/);
-  assert.match(bridge, /nativePlayer", "webos-watchdog"/);
-  assert.match(bridge, /"waiting"/);
-  assert.match(bridge, /"stalled"/);
-  assert.match(bridge, /"unexpected-ended"/);
-  assert.match(bridge, /STALL_LIMIT_MS = 15000/);
-  assert.match(bridge, /setNativeProvider/);
+  assert.match(bridge, /nativePlayer", "parent-webos"/);
+  assert.match(bridge, /gate-native-player/);
+  assert.match(bridge, /postMessage/);
+  assert.match(bridge, /requestVideoFrameCallback/);
+  assert.match(bridge, /FRAME_TIMEOUT_MS = 20000/);
+  assert.match(bridge, /removeSurface\(\)/);
+  assert.match(bridge, /document\.createElement\("video"\)/);
+  assert.match(sharedApp, /dataset\.tvPlatform === "webos"[^]*\? 1[^]*devicePixelRatio/);
+  assert.doesNotMatch(bridge, /location\.replace/);
   assert.doesNotMatch(bridge, /password|authorization|bearer/i);
 });
 

@@ -51,7 +51,10 @@ test("configura VAST somente com HTTPS e libera apenas o SDK IMA oficial na CSP"
     const csp = enabled.response.headers.get("content-security-policy") || "";
     assert.match(csp, /script-src 'self' https:\/\/imasdk\.googleapis\.com/);
     assert.match(csp, /frame-src 'self' https:\/\/imasdk\.googleapis\.com https:\/\/\*\.doubleclick\.net https:\/\/\*\.googlesyndication\.com/);
+    assert.match(csp, /frame-ancestors 'self' app: file: webos:/);
+    assert.doesNotMatch(csp, /frame-ancestors[^;]*https?:/);
     assert.doesNotMatch(csp, /unsafe-eval/);
+    assert.equal(enabled.response.headers.get("x-frame-options"), null, "o shell webOS local não pode ser bloqueado por SAMEORIGIN");
   } finally {
     if (originalVastTag === undefined) delete process.env.VAST_AD_TAG_URL;
     else process.env.VAST_AD_TAG_URL = originalVastTag;

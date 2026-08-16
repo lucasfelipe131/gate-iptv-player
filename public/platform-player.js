@@ -5,18 +5,64 @@
 
   const query = new URLSearchParams(global.location.search);
   const requestedPlatform = String(query.get("platform") || "").toLowerCase();
+  if (requestedPlatform === "webos" && global.parent && global.parent !== global) {
+    const send = (action, payload = {}) => {
+      global.parent.postMessage({ channel: "gate-native-player", action, ...payload }, "*");
+    };
+    global.GateNativePlayer = {
+      preview(url, fallbackUrl, name, streamType, x, y, width, height) {
+        send("preview", { url, fallbackUrl, name, streamType, x, y, width, height });
+      },
+      playFullscreen(url, fallbackUrl, name, streamType) {
+        send("playFullscreen", { url, fallbackUrl, name, streamType });
+      },
+      fullscreen() { send("fullscreen"); },
+      resizePreview(x, y, width, height) { send("resizePreview", { x, y, width, height }); },
+      close() { send("close"); }
+    };
+    global.addEventListener("message", (event) => {
+      if (event.source !== global.parent || event.data?.channel !== "gate-native-hooks") return;
+      const hook = event.data.event;
+      if (hook === "engine") global.GateNativeHooks?.onEngine?.(event.data.value || "LG webOS");
+      else if (hook === "error") global.GateNativeHooks?.onError?.(event.data.value || "O canal não respondeu.");
+      else if (hook === "closed") global.GateNativeHooks?.onClosed?.();
+    });
+    send("ready");
+    return;
+  }
+
+  if (requestedPlatform === "tizen" && !global.document.querySelector("object[type='application/avplayer']")) {
+    const avObject = global.document.createElement("object");
+    avObject.id = "gate-av-player";
+    avObject.type = "application/avplayer";
+    avObject.setAttribute("aria-hidden", "true");
+    Object.assign(avObject.style, { position: "fixed", inset: "0", width: "100%", height: "100%", zIndex: "0" });
+    global.document.body.appendChild(avObject);
+  }
+
   const avplay = global.webapis?.avplay;
   if (!avplay || (requestedPlatform !== "tizen" && !/Tizen/i.test(global.navigator.userAgent || ""))) return;
 
   const WATCHDOG_INTERVAL_MS = 2_500;
   const START_TIMEOUT_MS = 22_000;
   const STALL_TIMEOUT_MS = 18_000;
+  const BUFFER_TIMEOUT_MS = 16_000;
   const RETRY_LIMIT_PER_ROUTE = 2;
   let session = null;
   let watchdog = null;
   let generation = 0;
 
   function now() { return Date.now(); }
+
+  function freshUrl(value, attempt) {
+    try {
+      const url = new URL(value, global.location.href);
+      if (url.origin === global.location.origin && /^\/api\/stream\//.test(url.pathname)) {
+        url.searchParams.set("_gate_refresh", `${now()}-${attempt}`);
+      }
+      return url.href;
+    } catch { return value; }
+  }
 
   function notify(method, value) {
     try { global.GateNativeHooks?.[method]?.(value); } catch {}
@@ -81,24 +127,31 @@
 
   function openCurrent(reason, target = session) {
     if (!isActive(target)) return;
-    const url = target.urls[target.routeIndex];
-    if (!url) return retry("Rota vazia", true, target);
+    const sourceUrl = target.urls[target.routeIndex];
+    if (!sourceUrl) return retry("Rota vazia", true, target);
     safeClose();
     target.started = false;
     target.lastProgressAt = now();
     target.bufferingAt = 0;
+    target.lastBufferPercent = -1;
     const attempt = ++target.attempt;
+    const url = freshUrl(sourceUrl, attempt);
     try {
       avplay.open(url);
       displayRect(target.fullscreen ? null : target.bounds);
-      try { avplay.setStreamingProperty("USER_AGENT", "GATE-TV-TIZEN/0.6.0"); } catch {}
+      try { avplay.setStreamingProperty("USER_AGENT", "GATE-TV-TIZEN/0.6.2"); } catch {}
       try { avplay.setStreamingProperty("IS_LIVE", target.live ? "true" : "false"); } catch {}
       avplay.setListener({
         onbufferingstart() {
           if (isCurrentAttempt(target, attempt)) target.bufferingAt = now();
         },
-        onbufferingprogress() {
-          if (isCurrentAttempt(target, attempt)) target.lastProgressAt = now();
+        onbufferingprogress(percent) {
+          if (!isCurrentAttempt(target, attempt)) return;
+          const value = Number(percent);
+          if (Number.isFinite(value) && value !== target.lastBufferPercent) {
+            target.lastBufferPercent = value;
+            target.lastProgressAt = now();
+          }
         },
         onbufferingcomplete() {
           if (!isCurrentAttempt(target, attempt)) return;
@@ -163,6 +216,7 @@
       retryTimer: null,
       attempt: 0,
       bufferingAt: 0,
+      lastBufferPercent: -1,
       lastProgressAt: now()
     };
     openCurrent("", target);
@@ -170,6 +224,7 @@
       if (!isActive(target) || target.switching || global.document.hidden) return;
       const elapsed = now() - target.lastProgressAt;
       if (!target.started && elapsed > START_TIMEOUT_MS) retry("O canal não iniciou", true, target);
+      else if (target.bufferingAt && now() - target.bufferingAt > BUFFER_TIMEOUT_MS) retry("O buffer parou", false, target);
       else if (target.started && elapsed > STALL_TIMEOUT_MS) retry("O sinal parou de avançar", false, target);
     }, WATCHDOG_INTERVAL_MS);
   }

@@ -15,15 +15,15 @@ test("carrega a camada visual profissional depois dos estilos base", () => {
   const webos = indexHtml.indexOf("/webos.css");
   const professional = indexHtml.indexOf("/pro-ui.css");
   const web = indexHtml.indexOf("/web-ui.css");
-  const polish = indexHtml.indexOf("/ui-polish.css?v=2.1.0");
+  const polish = indexHtml.indexOf("/ui-polish.css?v=0.6.2");
   assert.ok(base >= 0);
   assert.ok(webos > base);
   assert.ok(professional > webos);
   assert.ok(web > professional);
   assert.ok(polish > web);
   assert.match(indexHtml, /id="gate-ui-polish-2"/);
-  assert.match(indexHtml, /pro-ui\.js\?v=2\.1\.0/);
-  assert.match(proJs, /ui-polish\.css\?v=2\.1\.0/);
+  assert.match(indexHtml, /pro-ui\.js\?v=0\.6\.2/);
+  assert.match(proJs, /ui-polish\.css\?v=0\.6\.2/);
 });
 
 test("amplia logotipos, linhas de canais e navegação para TV", () => {
@@ -48,10 +48,9 @@ test("exibe orientação contextual e sincroniza a navegação sem interferir no
 });
 
 test("service worker publica os novos recursos sem usar o cache antigo", () => {
-  assert.match(serviceWorker, /gate-player-v19-tv-ui-2-1-direct/);
-  assert.match(serviceWorker, /pro-ui\.css\?v=1\.0\.0/);
-  assert.match(serviceWorker, /ui-polish\.css\?v=2\.1\.0/);
-  assert.match(serviceWorker, /pro-ui\.js\?v=2\.1\.0/);
-  assert.match(serviceWorker, /web-ui\.css\?v=2\.0\.0/);
-  assert.doesNotMatch(serviceWorker, /gate-player-v18-tv-ui-2-1/);
+  assert.match(serviceWorker, /gate-player-v20-stability-layout-0-6-2/);
+  for (const asset of ["pro-ui.css", "ui-polish.css", "pro-ui.js", "web-ui.css", "app.js"]) {
+    assert.match(serviceWorker, new RegExp(`${asset.replace(".", "\\.")}\\?v=0\\.6\\.2`));
+  }
+  assert.doesNotMatch(serviceWorker, /gate-player-v19-tv-ui-2-1-direct/);
 });

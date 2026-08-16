@@ -1,19 +1,20 @@
 # GATE TV para LG webOS
 
-Cliente separado para TVs LG. O pacote abre a aplicacao oficial com
-`platform=webos`, registra o comportamento do controle e inclui um contrato de
-player com watchdog. Se a reproducao para de avancar por 15 segundos, o mesmo
-canal e reaberto com retentativas limitadas.
+Cliente separado para TVs LG. O shell local mantém a aplicação oficial em um
+iframe e o elemento de vídeo no contexto assinado do pacote. Assim o watchdog e
+o decoder webOS permanecem ativos durante toda a sessão, inclusive depois que a
+interface hospedada termina de carregar.
 
 ## Compatibilidade atual
 
-Este pacote com o nucleo JavaScript moderno requer **webOS TV 22 ou superior**
-(modelos de 2022 em diante). O webOS TV 22 usa Chromium 87; o webOS TV 6.x de
-2021 usa Chromium 79 e nao e alvo deste bundle. A LG nao oferece no
-`appinfo.json` um campo oficial para bloquear uma versao minima, por isso a
-exigencia tambem aparece em `appDescription` e deve ser aplicada na selecao de
-modelos do Seller Lounge. TVs anteriores exigirao um bundle legado transpilado,
-mantido como uma trilha separada.
+Este pacote requer **webOS TV 22 ou superior** (modelos de 2022 em diante). O
+webOS TV 22 usa Chromium 87; aparelhos anteriores exigem um
+bundle legado transpilado, mantido como uma trilha de distribuição separada. A
+restrição deve ser aplicada também na seleção de modelos do LG Seller Lounge.
+
+A rota hospedada `?platform=webos` mantém o modo seguro leve: sem Service Worker
+e sem as camadas visuais pesadas do navegador, mas agora com o pequeno adaptador
+que entrega o vídeo ao decoder e ao watchdog do shell local.
 
 ## Empacotar em `.ipk`
 
@@ -24,50 +25,38 @@ npm install -g @webos-tools/cli
 sh scripts/package-webos.sh
 ```
 
-O arquivo e criado em `dist/webos/`. Para testar no aparelho:
+O arquivo é criado em `dist/webos/`. Para testar no aparelho:
 
 ```bash
-ares-install -d myTV dist/webos/com.gateone.app.gateiptvplayer_0.6.0_all.ipk
+ares-install -d myTV dist/webos/com.gateone.app.gateiptvplayer_0.6.2_all.ipk
 ares-launch -d myTV com.gateone.app.gateiptvplayer
 ```
 
 ## Ponte de player
 
-`bridge.js` expoe `window.GateWebOSBridge` com `play`, `stop`, `recover` e
-`setNativeProvider`. O fallback usa o decoder HTML5 do webOS e monitora
-`waiting`, `stalled`, `error`, `ended` e o avanco real do relogio do video.
-Um adaptador Luna/decoder nativo futuro pode ser instalado por
-`setNativeProvider({ play, stop, recover, getProgress })` sem mudar a interface
-do aplicativo.
+`bridge.js` expõe `window.GateWebOSBridge` e recebe comandos de reprodução por
+`postMessage`. Cada recuperação destrói e recria o elemento `<video>`, renova a
+rota segura e ignora callbacks de tentativas antigas. O watchdog monitora o
+relógio, o buffer e os quadros realmente apresentados para detectar inclusive o
+caso em que o áudio continua, mas a imagem fica preta.
 
-### Contrato para o nucleo web remoto
-
-O carregamento usa `location.replace`, pois a pagina de producao proibe iframe
-por CSP. Portanto, ao receber `platform=webos`, o `public/app.js` remoto deve
-instalar o adapter novamente e seguir este contrato:
+Ao receber `platform=webos`, `public/platform-player.js` publica o mesmo
+contrato `GateNativePlayer` usado pelo núcleo compartilhado:
 
 ```js
-await adapter.play({ src, live: true, mimeType, rect });
-await adapter.recover("watchdog");
-await adapter.stop();
+window.GateNativePlayer.preview(url, fallbackUrl, name, type, x, y, width, height);
+window.GateNativePlayer.playFullscreen(url, fallbackUrl, name, type);
+window.GateNativePlayer.close();
 ```
 
-- O `src` pode ser a rota segura `/api/stream/...`, resolvida contra a origem de
-  producao. Nunca grave ou imprima essa URL.
-- Use um unico elemento `<video playsinline>` por sessao; reutilize-o entre
-  canais para reduzir pressao de memoria.
-- Escute `playing`, `timeupdate`, `progress`, `waiting`, `stalled`, `error` e
-  `ended`. Em canal ao vivo, `ended` e falha recuperavel.
-- A cada 3 segundos, confira `currentTime`. Se ficar igual por 15 segundos com o
-  video ativo, remova o `src`, chame `load()`, reatribua o mesmo `src` e execute
-  `play()`. Limite a cinco tentativas com backoff.
-- Se um provider nativo for adicionado, ele deve implementar `play(source)`,
-  `stop()`, `recover(source)` e opcionalmente `getProgress()`.
+- O iframe aceita somente a origem oficial de produção. O servidor libera como
+  ancestrais apenas o próprio site e esquemas locais de aplicativos de TV.
+- A cada tentativa, o shell cria uma nova superfície e acrescenta um
+  identificador de renovação somente às rotas internas do GATE.
+- A recuperação alterna as rotas principal e reserva indefinidamente com
+  backoff limitado, sem deixar timers de um canal antigo abrirem outro fluxo.
+- O shell não registra lista, usuário, senha ou URL de canal em logs.
 
-Teclas que o nucleo deve tratar: Voltar `461`, OK `13`, setas `37/38/39/40`,
-Play `415`, Pause `19`, Stop `413`, Retroceder `412`, Avancar `417` e canal
-anterior/proximo `34/33`. Ao receber Voltar durante o video, pare o player e
-retorne a lista; fora do video, permita o fechamento do aplicativo.
-
-O shell nunca armazena lista, usuario, senha ou URL de canal em logs. O GATE TV
-nao fornece conteudo; use apenas fontes autorizadas.
+Teclas principais: Voltar `461`, OK `13`, setas `37/38/39/40`, Play `415`,
+Pause `19` e Stop `413`. O GATE TV não fornece conteúdo; use apenas fontes
+autorizadas.

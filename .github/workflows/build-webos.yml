@@ -1,16 +1,26 @@
 name: Build LG webOS IPK
 
 on:
+  pull_request:
+    branches:
+      - main
   push:
     branches:
       - main
     paths:
       - '.github/workflows/build-webos.yml'
-      - 'platforms/lg-webos/**'
+      - 'platforms/webos/**'
+      - 'platforms/lg-webos/assets/**'
       - 'public/index.html'
+      - 'public/index-webos.html'
+      - 'public/platform-player.js'
       - 'public/webos.css'
       - 'public/webos-remote.js'
+      - 'public/webos-safe-*.js'
+      - 'public/webos-safe.css'
       - 'scripts/package-webos.sh'
+      - 'server.mjs'
+      - 'test/**'
   workflow_dispatch:
 
 jobs:
@@ -30,8 +40,12 @@ jobs:
         run: |
           npm ci
           node --check public/app.js
+          node --check public/platform-player.js
           node --check public/webos-remote.js
-          node -e "JSON.parse(require('fs').readFileSync('platforms/lg-webos/appinfo.json','utf8'))"
+          node --check public/webos-safe-bootstrap.js
+          node --check public/webos-remote-safe.js
+          node --check platforms/webos/bridge.js
+          node -e "JSON.parse(require('fs').readFileSync('platforms/webos/appinfo.json','utf8'))"
           npm test
 
       - name: Install LG webOS CLI

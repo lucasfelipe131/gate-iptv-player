@@ -2,7 +2,7 @@
   "use strict";
 
   var STYLE_ID = "gate-ui-polish-2";
-  var STYLE_URL = "/ui-polish.css?v=2.1.0";
+  var STYLE_URL = "/ui-polish.css?v=0.6.2";
 
   function ensurePolishStyle() {
     if (document.getElementById(STYLE_ID)) return;
@@ -27,7 +27,7 @@
 
   if (!tvMode) {
     document.body.classList.add("gate-browser-polish");
-    window.GateProUI = { version: "2.1.0", tvMode: false };
+    window.GateProUI = { version: "2.2.0", tvMode: false };
     return;
   }
 
@@ -65,6 +65,7 @@
     if (visible(document.getElementById("player-modal"))) return "player";
     if (document.querySelector(".live-preview-stage.live-preview-immersive")) return "fullscreen";
     if (visible(document.getElementById("details-modal"))) return "details";
+    if (visible(document.getElementById("tv-settings-modal"))) return "settings";
     if (visible(document.getElementById("pairing-modal"))) return "pairing";
     if (visible(document.getElementById("source-modal"))) return "source";
     if (window.location.pathname === "/assinar") return "premium";
@@ -84,6 +85,7 @@
     if (view === "player") return "OK reproduz ou pausa · Voltar fecha o player";
     if (view === "fullscreen") return "Canal em tela cheia · Voltar retorna à lista";
     if (view === "details") return "Escolha Assistir, Favoritar ou Voltar";
+    if (view === "settings") return "OK ativa ou desativa · Voltar fecha as configurações";
     if (view === "pairing") return "Leia o QR pelo celular ou escolha Digitar na TV";
     if (view === "source") return "Preencha os dados e pressione OK para conectar";
     if (view === "live") return "OK abre a prévia · outro OK coloca em tela cheia";
@@ -105,6 +107,7 @@
     if (view === "pairing") return "Conectar pelo celular";
     if (view === "source") return "Adicionar ou trocar lista";
     if (view === "details") return textOf("#details-title") || "Detalhes";
+    if (view === "settings") return "Configurações da TV";
     if (view === "catalog") return textOf(".catalog-titlebar h1") || "Catálogo";
     if (view === "home") return "Sua biblioteca";
     return textOf("h1") || "GATE IPTV PLAYER";
@@ -117,6 +120,7 @@
     if (view === "favorites") return "[data-action='open-favorites']";
     if (view === "pairing") return "[data-action='open-pairing']";
     if (view === "source") return "[data-action='open-source']";
+    if (view === "settings") return "[data-action='open-tv-settings']";
     if (view === "premium") return "[href='/assinar']";
     return "[href='/']";
   }
@@ -165,7 +169,7 @@
 
   function syncBodyState(view) {
     document.body.classList.toggle("player-open", view === "player");
-    document.body.classList.toggle("modal-open", view === "details" || view === "source" || view === "pairing");
+    document.body.classList.toggle("modal-open", view === "details" || view === "source" || view === "pairing" || view === "settings");
     document.body.classList.toggle("ad-open", view === "ad");
     document.body.setAttribute("data-gate-view", view);
   }
@@ -237,7 +241,7 @@
   syncView(true);
 
   window.GateProUI = {
-    version: "2.1.0",
+    version: "2.2.0",
     tvMode: true,
     showHint: showHint,
     syncView: function () { syncView(false); }

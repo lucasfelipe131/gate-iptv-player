@@ -13,10 +13,12 @@ import { createQrSvgDataUrl } from "./lib/qr-data-url.mjs";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const port = Number(process.env.PORT || 3000);
-const APP_VERSION = "0.6.0";
+const APP_VERSION = "0.6.2";
 const MAX_CATALOG_ITEMS = 2000;
 const MAX_LIVE_ITEMS = 6000;
 const SESSION_TTL = 24 * 60 * 60 * 1000;
+const HLS_TICKET_TTL = 30 * 60 * 1000;
+const MAX_STREAM_TICKETS = 50_000;
 const PAIRING_SESSION_TTL = Math.min(
   15 * 60 * 1000,
   Math.max(50, Number(process.env.PAIRING_SESSION_TTL_MS) || 5 * 60 * 1000)
@@ -48,10 +50,13 @@ app.use(helmet({
       fontSrc: ["'self'"],
       frameSrc: ["'self'", "https://imasdk.googleapis.com", "https://*.doubleclick.net", "https://*.googlesyndication.com"],
       objectSrc: ["'none'"],
-      frameAncestors: ["'none'"]
+      frameAncestors: ["'self'", "app:", "file:", "webos:"]
     }
   },
-  crossOriginResourcePolicy: { policy: "cross-origin" }
+  crossOriginResourcePolicy: { policy: "cross-origin" },
+  // The signed webOS shell is cross-origin (app/file). frame-ancestors above is
+  // the authoritative allowlist; X-Frame-Options: SAMEORIGIN would block it.
+  xFrameOptions: false
 }));
 app.use(express.json({ limit: "2mb" }));
 
@@ -377,26 +382,54 @@ const streamTicketByUrl = new Map();
 const xtreamSessions = new Map();
 const pairingSessions = new Map();
 
+function deleteStreamTicket(token, entry = streamTickets.get(token)) {
+  if (!entry) return;
+  streamTickets.delete(token);
+  if (streamTicketByUrl.get(entry.ticketKey) === token) streamTicketByUrl.delete(entry.ticketKey);
+}
+
+function pruneStreamTickets(now = Date.now()) {
+  for (const [token, entry] of streamTickets) {
+    if (entry.expiresAt <= now) deleteStreamTicket(token, entry);
+  }
+  while (streamTickets.size >= MAX_STREAM_TICKETS) {
+    const oldest = streamTickets.entries().next().value;
+    if (!oldest) break;
+    deleteStreamTicket(oldest[0], oldest[1]);
+  }
+}
+
 function registerStream(remoteUrl, kind = "media") {
   const url = String(remoteUrl || "").trim();
   if (!url) return "";
+  const now = Date.now();
   const ticketKey = `${kind}:${url}`;
   const existingToken = streamTicketByUrl.get(ticketKey);
   const existing = existingToken && streamTickets.get(existingToken);
-  if (existing && existing.expiresAt > Date.now()) return `/api/stream/${existingToken}`;
+  if (existing && existing.expiresAt > now) return `/api/stream/${existingToken}`;
+  if (streamTickets.size >= MAX_STREAM_TICKETS) pruneStreamTickets(now);
   const token = crypto.randomBytes(18).toString("base64url");
-  const now = Date.now();
-  const entry = { url, kind, ticketKey, createdAt: now, lastAccessAt: now, expiresAt: now + SESSION_TTL };
+  const ttlMs = kind === "hls" ? HLS_TICKET_TTL : SESSION_TTL;
+  const entry = { url, kind, ticketKey, ttlMs, createdAt: now, lastAccessAt: now, expiresAt: now + ttlMs };
   streamTickets.set(token, entry);
   streamTicketByUrl.set(ticketKey, token);
   return `/api/stream/${token}`;
 }
 
 function activeStreamTicket(token) {
-  const entry = streamTickets.get(String(token || ""));
-  if (!entry || entry.expiresAt <= Date.now()) return null;
+  const normalizedToken = String(token || "");
+  const entry = streamTickets.get(normalizedToken);
+  if (!entry) return null;
+  if (entry.expiresAt <= Date.now()) {
+    deleteStreamTicket(normalizedToken, entry);
+    return null;
+  }
   entry.lastAccessAt = Date.now();
-  entry.expiresAt = entry.lastAccessAt + SESSION_TTL;
+  entry.expiresAt = entry.lastAccessAt + (entry.ttlMs || SESSION_TTL);
+  // Keep the Map ordered by recent access so the cap evicts inactive segments
+  // before a channel that is still being watched.
+  streamTickets.delete(normalizedToken);
+  streamTickets.set(normalizedToken, entry);
   return entry;
 }
 
@@ -405,7 +438,7 @@ function streamTicketResponse(token, entry) {
     playUrl: `/api/stream/${token}`,
     streamType: streamTypeFor(entry.url),
     expiresAt: new Date(entry.expiresAt).toISOString(),
-    expiresInSeconds: Math.floor(SESSION_TTL / 1000)
+    expiresInSeconds: Math.floor((entry.ttlMs || SESSION_TTL) / 1000)
   };
 }
 
@@ -622,8 +655,8 @@ function rewriteManifest(text, baseUrl) {
   return String(text).split(/\r?\n/).map((rawLine) => {
     const line = rawLine.trim();
     if (!line) return rawLine;
-    if (!line.startsWith("#")) return registerStream(new URL(line, baseUrl).toString());
-    return rawLine.replace(/URI="([^"]+)"/g, (_match, uri) => `URI="${registerStream(new URL(uri, baseUrl).toString())}"`);
+    if (!line.startsWith("#")) return registerStream(new URL(line, baseUrl).toString(), "hls");
+    return rawLine.replace(/URI="([^"]+)"/g, (_match, uri) => `URI="${registerStream(new URL(uri, baseUrl).toString(), "hls")}"`);
   }).join("\n");
 }
 
@@ -741,15 +774,15 @@ function respondWithCheckout(_req, res) {
 }
 
 app.post("/api/client-diagnostics", (req, res) => {
-    const platform = String(req.body?.platform || "unknown").replace(/[^a-z0-9_-]/gi, "").slice(0, 30);
-    const kind = String(req.body?.kind || "event").replace(/[^a-z0-9_-]/gi, "").slice(0, 40);
-    const message = String(req.body?.message || "").replace(/[\r\n]/g, " ").slice(0, 500);
-    const extra = String(req.body?.extra || "").replace(/[\r\n]/g, " ").slice(0, 300);
-    console.warn(`CLIENT_DIAGNOSTIC platform=${platform} kind=${kind} message=${JSON.stringify(message)} extra=${JSON.stringify(extra)}`);
-    res.setHeader("cache-control", "no-store");
-    return res.status(204).end();
-  });
-  
+  const platform = String(req.body?.platform || "unknown").replace(/[^a-z0-9_-]/gi, "").slice(0, 30);
+  const kind = String(req.body?.kind || "event").replace(/[^a-z0-9_-]/gi, "").slice(0, 40);
+  const message = String(req.body?.message || "").replace(/[\r\n]/g, " ").slice(0, 500);
+  const extra = String(req.body?.extra || "").replace(/[\r\n]/g, " ").slice(0, 300);
+  console.warn(`CLIENT_DIAGNOSTIC platform=${platform} kind=${kind} message=${JSON.stringify(message)} extra=${JSON.stringify(extra)}`);
+  res.setHeader("cache-control", "no-store");
+  return res.status(204).end();
+});
+
 app.get("/health", (_req, res) => res.json({ ok: true, service: "gate-iptv-player", version: APP_VERSION }));
 app.get("/api/config", (_req, res) => {
   const billing = billingConfiguration();
@@ -1164,9 +1197,7 @@ app.post("/api/renewals", sensitiveRateLimit("billing_checkout", 10, 10 * 60_000
 
 setInterval(() => {
   const now = Date.now();
-  for (const [token, entry] of streamTickets) {
-    if (entry.expiresAt <= now) { streamTickets.delete(token); streamTicketByUrl.delete(entry.ticketKey || `media:${entry.url}`); }
-  }
+  pruneStreamTickets(now);
   for (const [id, session] of xtreamSessions) if (session.expiresAt <= now) xtreamSessions.delete(id);
   for (const [code, entry] of pairingSessions) {
     expirePairingSession(entry, now);
@@ -1179,14 +1210,14 @@ setInterval(() => {
 app.use("/vendor/hls.min.js", express.static(path.join(__dirname, "node_modules/hls.js/dist/hls.min.js")));
 app.use("/vendor/mpegts.min.js", express.static(path.join(__dirname, "node_modules/mpegts.js/dist/mpegts.js")));
 function servePlatformIndex(req, res, next) {
-    if (String(req.query?.platform || "").toLowerCase() !== "webos") return next();
-    res.setHeader("cache-control", "no-cache, no-store, must-revalidate");
-    res.setHeader("x-gate-ui-mode", "webos-safe-1.0.0");
-    return res.sendFile(path.join(__dirname, "public/index-webos.html"));
-  }
-  app.get("/", servePlatformIndex);
-  app.get("/index.html", servePlatformIndex);
-  
+  if (String(req.query?.platform || "").toLowerCase() !== "webos") return next();
+  res.setHeader("cache-control", "no-cache, no-store, must-revalidate");
+  res.setHeader("x-gate-ui-mode", "webos-safe-1.1.0");
+  return res.sendFile(path.join(__dirname, "public/index-webos.html"));
+}
+app.get("/", servePlatformIndex);
+app.get("/index.html", servePlatformIndex);
+
 app.use(express.static(path.join(__dirname, "public"), {
   maxAge: "1h",
   setHeaders(res, filePath) {

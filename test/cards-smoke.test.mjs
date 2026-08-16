@@ -266,13 +266,15 @@ test("usa a ponte nativa no APK sem abrir uma segunda conexão no WebView", asyn
     get() { return this.parentNode ? window.document.body : null; }
   });
 
-  const nativeCalls = { preview: [], fullscreen: 0, close: 0 };
+  const nativeCalls = { preview: [], fullscreen: 0, close: 0, autoStart: false };
   window.GateNativePlayer = {
     preview(...args) { nativeCalls.preview.push(args); },
     playFullscreen() {},
     fullscreen() { nativeCalls.fullscreen += 1; },
     resizePreview() {},
-    close() { nativeCalls.close += 1; }
+    close() { nativeCalls.close += 1; },
+    isAutoStartEnabled() { return nativeCalls.autoStart; },
+    setAutoStartEnabled(enabled) { nativeCalls.autoStart = Boolean(enabled); }
   };
   window.fetch = async (input, options = {}) => {
     const pathname = new URL(String(input), window.location.href).pathname;
@@ -281,7 +283,7 @@ test("usa a ponte nativa no APK sem abrir uma segunda conexão no WebView", asyn
       source: "xtream",
       sessionId: "native-session",
       counts: { live: 1, movies: 0, series: 0 },
-      channels: [{ id: "7", name: "Canal Nativo", group: "Teste", playUrl: "/api/stream/token", fallbackPlayUrl: "/api/stream/token-ts", streamType: "hls", fallbackStreamType: "mpegts" }]
+      channels: [{ id: "7", name: "Canal Nativo", group: "Teste", playUrl: "/api/stream/token", fallbackPlayUrl: "/api/stream/token-ts", streamType: "hls", fallbackStreamType: "hls" }]
     });
     if (pathname === "/api/xtream/epg") return reply({ items: { 7: {} } });
     if (pathname === "/api/xtream/catalog") return reply({ total: 0, items: [] });
@@ -291,6 +293,14 @@ test("usa a ponte nativa no APK sem abrir uma segunda conexão no WebView", asyn
   window.eval(appScript);
   await waitFor(() => window.document.querySelector(".hero"));
   assert.equal(window.document.body.classList.contains("native-player"), true);
+  const settingsButton = window.document.querySelector("[data-action='open-tv-settings']");
+  assert.ok(settingsButton);
+  settingsButton.click();
+  assert.equal(window.document.querySelector("#tv-settings-modal").classList.contains("hidden"), false);
+  window.document.querySelector("#autostart-toggle").click();
+  assert.equal(nativeCalls.autoStart, true);
+  assert.match(window.document.querySelector("#autostart-description").textContent, /Ativado/);
+  window.document.querySelector(".close-tv-settings-primary").click();
   const form = window.document.querySelector("#xtream-form");
   form.elements.serverUrl.value = "provider.test";
   form.elements.username.value = "user";

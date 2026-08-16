@@ -1,4 +1,4 @@
-const APP_VERSION = "0.6.0";
+const APP_VERSION = "0.6.2";
 const CACHE_DB = "gate-player-cache-v1";
 const CACHE_STORE = "device";
 const FAVORITES_KEY = "gate.favorites.v1";
@@ -70,6 +70,7 @@ const state = {
 const main = document.querySelector("#main-content");
 const sourceModal = document.querySelector("#source-modal");
 const pairingModal = document.querySelector("#pairing-modal");
+const tvSettingsModal = document.querySelector("#tv-settings-modal");
 const playerModal = document.querySelector("#player-modal");
 const detailsModal = document.querySelector("#details-modal");
 const detailsPoster = document.querySelector("#details-poster");
@@ -77,7 +78,7 @@ const detailsBackdrop = document.querySelector("#details-backdrop");
 const detailsPrimary = document.querySelector("#details-primary");
 const detailsFavorite = document.querySelector("#details-favorite");
 const sourceStatus = document.querySelector("#source-status");
-const video = document.querySelector("#video-player");
+let video = document.querySelector("#video-player");
 const playerStatus = document.querySelector("#player-status");
 const playerStatusText = document.querySelector("#player-status-text");
 const retryButton = document.querySelector("#retry-stream");
@@ -1212,6 +1213,16 @@ function directStreamUrl(value) {
   } catch { return String(value || ""); }
 }
 
+function freshPlaybackUrl(value, serial) {
+  try {
+    const url = new URL(String(value || ""), location.href);
+    if (url.origin === location.origin && /^\/api\/stream\//.test(url.pathname)) {
+      url.searchParams.set("_gate_refresh", String(serial));
+    }
+    return url.href;
+  } catch { return String(value || ""); }
+}
+
 function streamCandidates(item) {
   const candidates = [];
   const add = (url, type, direct) => {
@@ -1220,10 +1231,11 @@ function streamCandidates(item) {
     if (!resolved || candidates.some((candidate) => candidate.url === resolved)) return;
     candidates.push({ url: resolved, type: type || "auto", direct });
   };
-  add(item?.playUrl, item?.streamType, false);
-  add(item?.playUrl, item?.streamType, true);
-  add(item?.fallbackPlayUrl, item?.fallbackStreamType, false);
-  add(item?.fallbackPlayUrl, item?.fallbackStreamType, true);
+  const directFirst = document.documentElement.dataset.tvPlatform === "webos";
+  add(item?.playUrl, item?.streamType, directFirst);
+  add(item?.playUrl, item?.streamType, !directFirst);
+  add(item?.fallbackPlayUrl, item?.fallbackStreamType, directFirst);
+  add(item?.fallbackPlayUrl, item?.fallbackStreamType, !directFirst);
   return candidates;
 }
 
@@ -1242,6 +1254,59 @@ function nativePlayerAvailable() {
   catch { return false; }
 }
 
+function nativeAutoStartAvailable() {
+  try {
+    return Boolean(window.GateNativePlayer
+      && typeof window.GateNativePlayer.isAutoStartEnabled === "function"
+      && typeof window.GateNativePlayer.setAutoStartEnabled === "function");
+  } catch { return false; }
+}
+
+function nativeAutoStartEnabled() {
+  try { return nativeAutoStartAvailable() && Boolean(window.GateNativePlayer.isAutoStartEnabled()); }
+  catch { return false; }
+}
+
+function renderTvSettings() {
+  if (!tvSettingsModal) return;
+  const toggle = tvSettingsModal.querySelector("#autostart-toggle");
+  const description = tvSettingsModal.querySelector("#autostart-description");
+  const enabled = nativeAutoStartEnabled();
+  toggle?.classList.toggle("enabled", enabled);
+  toggle?.setAttribute("aria-pressed", String(enabled));
+  if (description) description.textContent = enabled ? "Ativado · a GATE TV tentará abrir ao ligar" : "Desativado";
+}
+
+function openTvSettings() {
+  if (!tvSettingsModal || !nativeAutoStartAvailable()) {
+    showToast("Esta opção está disponível no aplicativo para Android TV.");
+    return;
+  }
+  state.lastFocused = document.activeElement;
+  renderTvSettings();
+  tvSettingsModal.classList.remove("hidden");
+  refreshFocusable();
+  setTimeout(() => tvSettingsModal.querySelector("#autostart-toggle")?.focus(), 0);
+}
+
+function closeTvSettings() {
+  if (!tvSettingsModal) return;
+  tvSettingsModal.classList.add("hidden");
+  state.lastFocused?.focus?.();
+}
+
+function toggleNativeAutoStart() {
+  if (!nativeAutoStartAvailable()) return;
+  const enabled = !nativeAutoStartEnabled();
+  try {
+    window.GateNativePlayer.setAutoStartEnabled(enabled);
+    renderTvSettings();
+    showToast(enabled ? "Inicialização automática ativada." : "Inicialização automática desativada.");
+  } catch {
+    showToast("A TV não permitiu alterar essa configuração.");
+  }
+}
+
 window.GateNativeHooks = {
   onEngine(engine) {
     document.documentElement.dataset.nativeEngine = String(engine || "").toLowerCase();
@@ -1258,9 +1323,27 @@ window.GateNativeHooks = {
 function nativeStreamPair(item) {
   const candidates = streamCandidates(item);
   const primary = candidates.find((candidate) => candidate.direct) || candidates[0];
-  const fallback = candidates.find((candidate) => candidate.direct && candidate.url !== primary?.url && candidate.type !== primary?.type)
+  const sourceKey = (candidate) => {
+    try {
+      const url = new URL(candidate?.url || "", location.href);
+      url.searchParams.delete("direct");
+      url.searchParams.delete("_gate_refresh");
+      return url.href;
+    } catch { return String(candidate?.url || ""); }
+  };
+  const primaryKey = sourceKey(primary);
+  const fallback = candidates.find((candidate) => candidate.direct && sourceKey(candidate) !== primaryKey)
+    || candidates.find((candidate) => sourceKey(candidate) !== primaryKey)
     || candidates.find((candidate) => candidate.url !== primary?.url);
   return { primary, fallback };
+}
+
+function nativeCoordinateScale() {
+  // Android and AVPlay consume physical pixels. The webOS decoder lives in a
+  // parent HTML document, so its bounds must stay in CSS pixels even on 4K.
+  return document.documentElement.dataset.tvPlatform === "webos"
+    ? 1
+    : Number(devicePixelRatio || 1);
 }
 
 function playNativePreview(item) {
@@ -1268,7 +1351,7 @@ function playNativePreview(item) {
   const stage = main.querySelector(".live-preview-stage");
   if (!stage) return false;
   const rect = stage.getBoundingClientRect();
-  const scale = Number(devicePixelRatio || 1);
+  const scale = nativeCoordinateScale();
   const { primary, fallback } = nativeStreamPair(item);
   if (!primary?.url) return false;
   try {
@@ -1291,7 +1374,7 @@ function syncNativePreviewBounds() {
   const stage = main.querySelector(".live-preview-stage");
   if (!stage) return;
   const rect = stage.getBoundingClientRect();
-  const scale = Number(devicePixelRatio || 1);
+  const scale = nativeCoordinateScale();
   try {
     window.GateNativePlayer.resizePreview(
       Math.max(0, Math.round(rect.left * scale)),
@@ -1304,6 +1387,13 @@ function syncNativePreviewBounds() {
 
 function clearWebEngine(session) {
   if (!session) return;
+  session.attempt += 1;
+  for (const timer of session.timers || []) clearTimeout(timer);
+  session.timers?.clear?.();
+  if (session.frameCallbackId != null && typeof session.media.cancelVideoFrameCallback === "function") {
+    try { session.media.cancelVideoFrameCallback(session.frameCallbackId); } catch {}
+  }
+  session.frameCallbackId = null;
   if (session.hls) { session.hls.destroy(); session.hls = null; }
   if (session.mpegts) {
     try { session.mpegts.pause(); session.mpegts.unload(); session.mpegts.detachMediaElement(); session.mpegts.destroy(); } catch {}
@@ -1319,11 +1409,96 @@ function destroyWebPlayback(slot, clearMedia = true) {
   if (!session) return;
   clearInterval(session.watchdog);
   session.destroyed = true;
-  if (clearMedia) clearWebEngine(session);
   for (const [name, handler] of session.listeners || []) session.media.removeEventListener(name, handler);
+  if (clearMedia) clearWebEngine(session);
+  else {
+    for (const timer of session.timers || []) clearTimeout(timer);
+    session.timers?.clear?.();
+  }
   state[slot] = null;
   if (slot === "webPlayer") state.hls = null;
   if (slot === "webPreview") state.previewHls = null;
+}
+
+function webSessionSlot(session) {
+  return session?.preview ? "webPreview" : "webPlayer";
+}
+
+function scheduleWebTask(session, callback, delay, attempt = session?.attempt) {
+  if (!session || session.destroyed) return null;
+  const timer = setTimeout(() => {
+    session.timers.delete(timer);
+    if (session.destroyed || (attempt != null && session.attempt !== attempt)) return;
+    callback();
+  }, delay);
+  session.timers.add(timer);
+  return timer;
+}
+
+function isCurrentWebAttempt(session, attempt) {
+  return Boolean(session && !session.destroyed && session.attempt === attempt);
+}
+
+function sampleRenderedFrames(session, media, now = Date.now()) {
+  let frames = Number.NaN;
+  try { frames = Number(media.getVideoPlaybackQuality?.().totalVideoFrames); } catch {}
+  if (!Number.isFinite(frames)) frames = Number(media.webkitDecodedFrameCount);
+  if (!Number.isFinite(frames)) frames = Number(media.mozDecodedFrames);
+  if (!Number.isFinite(frames) || frames < 0) return;
+  session.frameMonitoringAvailable = true;
+  if (frames > session.lastRenderedFrames) {
+    session.lastRenderedFrames = frames;
+    session.videoFramesSeen = frames > 0;
+    session.lastVideoFrameAt = now;
+  }
+}
+
+function startVideoFrameMonitor(session) {
+  const media = session?.media;
+  if (!media || typeof media.requestVideoFrameCallback !== "function") return;
+  const callback = (_now, metadata) => {
+    if (session.destroyed || session.media !== media) return;
+    const frames = Number(metadata?.presentedFrames);
+    session.frameMonitoringAvailable = true;
+    if (!Number.isFinite(frames) || frames > session.lastRenderedFrames) {
+      if (Number.isFinite(frames)) session.lastRenderedFrames = frames;
+      session.videoFramesSeen = true;
+      session.lastVideoFrameAt = Date.now();
+    }
+    session.frameCallbackId = media.requestVideoFrameCallback(callback);
+  };
+  session.frameCallbackId = media.requestVideoFrameCallback(callback);
+}
+
+function replaceWebVideoSurface(session) {
+  const previous = session.media;
+  const replacement = previous.cloneNode(false);
+  if (previous.parentNode) previous.parentNode.replaceChild(replacement, previous);
+  if (previous === video) {
+    video = replacement;
+    bindPrimaryVideoEvents(video);
+  }
+  return replacement;
+}
+
+function recoverWebVideoSurface(session, message) {
+  if (!session || session.destroyed || session.switching) return;
+  session.switching = true;
+  const slot = webSessionSlot(session);
+  const item = session.item;
+  const preview = session.preview;
+  const index = session.index;
+  const surfaceResetCount = session.surfaceResetCount + 1;
+  playbackStatus(session, message || "A imagem parou. Reiniciando o vídeo…");
+  clearInterval(session.watchdog);
+  session.destroyed = true;
+  for (const [name, handler] of session.listeners || []) session.media.removeEventListener(name, handler);
+  clearWebEngine(session);
+  const replacement = replaceWebVideoSurface(session);
+  if (state[slot] === session) state[slot] = null;
+  if (slot === "webPlayer") state.hls = null;
+  if (slot === "webPreview") state.previewHls = null;
+  startWebPlayback(replacement, item, { preview, startIndex: index, surfaceResetCount });
 }
 
 function playbackStatus(session, message, type = "loading") {
@@ -1378,10 +1553,10 @@ function advanceWebCandidate(session, message) {
   session.networkRetries = 0;
   session.mediaRetries = 0;
   session.stallRetries = 0;
-  setTimeout(() => {
+  scheduleWebTask(session, () => {
     session.switching = false;
     startWebCandidate(session, message);
-  }, session.preview ? 180 : 320);
+  }, session.preview ? 180 : 320, session.attempt);
 }
 
 function retryWebCandidate(session, message, { preserveNetworkRetries = false } = {}) {
@@ -1395,30 +1570,38 @@ function retryWebCandidate(session, message, { preserveNetworkRetries = false } 
   session.starvedAt = 0;
   session.unexpectedPauseAt = 0;
   playbackStatus(session, message || "Reconectando o canal…");
-  setTimeout(() => {
+  scheduleWebTask(session, () => {
     session.switching = false;
     startWebCandidate(session, message);
-  }, session.preview ? 350 : 700);
+  }, session.preview ? 350 : 700, session.attempt);
 }
 
 function startWebCandidate(session, reason = "") {
   if (!session || session.destroyed) return;
+  const attempt = ++session.attempt;
   const candidate = session.candidates[session.index];
   if (!candidate) {
     session.routeRounds += 1;
     session.index = 0;
     const delay = Math.min(15_000, 2_000 * session.routeRounds);
     playbackStatus(session, reason || "Mantendo o canal aberto e procurando uma rota estável…");
-    setTimeout(() => startWebCandidate(session, "Nova tentativa de conexão…"), delay);
+    scheduleWebTask(session, () => startWebCandidate(session, "Nova tentativa de conexão…"), delay, attempt);
     return;
   }
+  const playbackUrl = freshPlaybackUrl(candidate.url, `${Date.now()}-${attempt}`);
   session.lastProgressAt = Date.now();
   session.lastDataAt = session.lastProgressAt;
   session.starvedAt = 0;
   session.lastTime = -1;
   session.lastDecodedFrames = -1;
+  session.lastRenderedFrames = -1;
+  session.lastVideoFrameAt = 0;
+  session.frameMonitoringAvailable = false;
+  session.videoFramesSeen = false;
+  session.startedAt = 0;
   session.started = false;
   session.lastPlayAttemptAt = 0;
+  startVideoFrameMonitor(session);
   playbackStatus(session, candidate.direct ? "Testando rota direta mais rápida…" : "Abrindo pela rota compatível…");
 
   if (candidate.type === "hls" && window.Hls?.isSupported()) {
@@ -1426,20 +1609,21 @@ function startWebCandidate(session, reason = "") {
     session.hls = hls;
     if (session.preview) state.previewHls = hls; else state.hls = hls;
     hls.on(window.Hls.Events.MANIFEST_PARSED, () => {
-      if (session.destroyed) return;
+      if (!isCurrentWebAttempt(session, attempt)) return;
       requestWebMediaPlay(session);
     });
     hls.on(window.Hls.Events.LEVEL_SWITCHED, (_event, data) => {
-      if (!session.preview) updatePlayerQuality(hls.levels?.[data.level]?.height || session.media.videoHeight);
+      if (isCurrentWebAttempt(session, attempt) && !session.preview) updatePlayerQuality(hls.levels?.[data.level]?.height || session.media.videoHeight);
     });
     if (window.Hls.Events.FRAG_BUFFERED) {
       hls.on(window.Hls.Events.FRAG_BUFFERED, () => {
+        if (!isCurrentWebAttempt(session, attempt)) return;
         session.lastDataAt = Date.now();
         if (!session.media.paused) session.starvedAt = 0;
       });
     }
     hls.on(window.Hls.Events.ERROR, (_event, data) => {
-      if (session.destroyed) return;
+      if (!isCurrentWebAttempt(session, attempt)) return;
       if (!data.fatal) {
         const detail = String(data.details || "").toLowerCase();
         if (/stalled|buffer|fragloaderror|levelloaderror/.test(detail) && !session.starvedAt) {
@@ -1450,7 +1634,9 @@ function startWebCandidate(session, reason = "") {
       if (!candidate.direct && data.type === window.Hls.ErrorTypes.NETWORK_ERROR && session.networkRetries < 2) {
         session.networkRetries += 1;
         playbackStatus(session, "Reconectando sem trocar de rota…");
-        setTimeout(() => hls.startLoad(), 700 * session.networkRetries);
+        scheduleWebTask(session, () => {
+          if (isCurrentWebAttempt(session, attempt) && session.hls === hls) hls.startLoad();
+        }, 700 * session.networkRetries, attempt);
         return;
       }
       if (data.type === window.Hls.ErrorTypes.MEDIA_ERROR && session.mediaRetries < 1) {
@@ -1460,14 +1646,14 @@ function startWebCandidate(session, reason = "") {
       }
       advanceWebCandidate(session, hlsErrorMessage(data));
     });
-    hls.loadSource(candidate.url);
+    hls.loadSource(playbackUrl);
     hls.attachMedia(session.media);
     return;
   }
 
   if (candidate.type === "mpegts" && window.mpegts?.isSupported?.()) {
     try {
-      const player = window.mpegts.createPlayer({ type: "mpegts", isLive: true, url: candidate.url }, {
+      const player = window.mpegts.createPlayer({ type: "mpegts", isLive: true, url: playbackUrl }, {
         enableWorker: true,
         enableStashBuffer: true,
         stashInitialSize: session.preview ? 1024 * 1024 : 3 * 1024 * 1024,
@@ -1484,6 +1670,7 @@ function startWebCandidate(session, reason = "") {
       player.attachMediaElement(session.media);
       player.load();
       player.on(window.mpegts.Events.ERROR, () => {
+        if (!isCurrentWebAttempt(session, attempt)) return;
         if (session.networkRetries < 2) {
           session.networkRetries += 1;
           retryWebCandidate(session, "O fluxo TS oscilou. Reconectando na mesma rota…", { preserveNetworkRetries: true });
@@ -1493,6 +1680,7 @@ function startWebCandidate(session, reason = "") {
       });
       if (window.mpegts.Events.STATISTICS_INFO) {
         player.on(window.mpegts.Events.STATISTICS_INFO, (info) => {
+          if (!isCurrentWebAttempt(session, attempt)) return;
           const totalFrames = Number(info?.decodedFrames);
           const frameDelta = Number(info?.decodedFramesDelta);
           if (Number.isFinite(totalFrames) && totalFrames >= 0 && totalFrames !== session.lastDecodedFrames) {
@@ -1506,7 +1694,9 @@ function startWebCandidate(session, reason = "") {
       for (const eventName of ["LOADING_COMPLETE", "RECOVERED_EARLY_EOF"]) {
         const event = window.mpegts.Events?.[eventName];
         if (!event) continue;
-        player.on(event, () => retryWebCandidate(session, "O servidor encerrou o fluxo. Reconectando o mesmo canal…"));
+        player.on(event, () => {
+          if (isCurrentWebAttempt(session, attempt)) retryWebCandidate(session, "O servidor encerrou o fluxo. Reconectando o mesmo canal…");
+        });
       }
       Promise.resolve(player.play()).catch(() => {
         if (session.preview) requestWebMediaPlay(session);
@@ -1519,11 +1709,11 @@ function startWebCandidate(session, reason = "") {
     }
   }
 
-  session.media.src = candidate.url;
+  session.media.src = playbackUrl;
   requestWebMediaPlay(session);
 }
 
-function startWebPlayback(media, item, { preview = false } = {}) {
+function startWebPlayback(media, item, { preview = false, startIndex = 0, surfaceResetCount = 0 } = {}) {
   const slot = preview ? "webPreview" : "webPlayer";
   destroyWebPlayback(slot);
   const candidates = streamCandidates(item);
@@ -1533,10 +1723,12 @@ function startWebPlayback(media, item, { preview = false } = {}) {
     preview,
     live: isLiveWebPlayback(item, preview),
     candidates,
-    index: 0,
+    index: Math.max(0, Math.min(Number(startIndex) || 0, Math.max(0, candidates.length - 1))),
     hls: null,
     mpegts: null,
     listeners: [],
+    timers: new Set(),
+    attempt: 0,
     destroyed: false,
     switching: false,
     lastProgressAt: Date.now(),
@@ -1551,7 +1743,14 @@ function startWebPlayback(media, item, { preview = false } = {}) {
     lastPlayAttemptAt: 0,
     unexpectedPauseAt: 0,
     userPaused: false,
-    completed: false
+    completed: false,
+    startedAt: 0,
+    surfaceResetCount,
+    lastRenderedFrames: -1,
+    lastVideoFrameAt: 0,
+    videoFramesSeen: false,
+    frameMonitoringAvailable: false,
+    frameCallbackId: null
   };
   if (preview) {
     media.muted = true;
@@ -1562,6 +1761,7 @@ function startWebPlayback(media, item, { preview = false } = {}) {
   const listen = (name, handler) => { media.addEventListener(name, handler); session.listeners.push([name, handler]); };
   listen("playing", () => {
     session.started = true;
+    if (!session.startedAt) session.startedAt = Date.now();
     session.completed = false;
     session.userPaused = false;
     markPlaybackProgress(session);
@@ -1610,6 +1810,24 @@ function startWebPlayback(media, item, { preview = false } = {}) {
         if (media.ended || now - session.unexpectedPauseAt > (preview ? 6_000 : 9_000)) {
           retryWebCandidate(session, "O sinal foi interrompido. Reconectando o mesmo canal…");
         }
+      }
+      return;
+    }
+    sampleRenderedFrames(session, media, now);
+    if (session.startedAt && now - session.startedAt > 60_000) session.surfaceResetCount = 0;
+    const videoExpected = Number(media.videoWidth) > 0 || Number(media.videoHeight) > 0;
+    const firstFrameTimedOut = session.started && videoExpected && session.frameMonitoringAvailable
+      && !session.videoFramesSeen && now - session.startedAt > (preview ? 15_000 : 20_000);
+    const renderedFramesStopped = session.videoFramesSeen && session.lastVideoFrameAt > 0
+      && now - session.lastVideoFrameAt > (preview ? 15_000 : 20_000);
+    if (firstFrameTimedOut || renderedFramesStopped) {
+      if (session.surfaceResetCount < 2) {
+        recoverWebVideoSurface(session, firstFrameTimedOut
+          ? "O som iniciou sem imagem. Reiniciando o decodificador…"
+          : "A imagem parou. Reiniciando o decodificador…");
+      } else {
+        session.surfaceResetCount = 0;
+        advanceWebCandidate(session, "A rota ficou sem imagem. Tentando a alternativa…");
       }
       return;
     }
@@ -2065,6 +2283,7 @@ function activeFocusScope() {
   if (adOverlay && !adOverlay.classList.contains("hidden")) return adOverlay;
   if (!playerModal.classList.contains("hidden")) return playerModal;
   if (!detailsModal.classList.contains("hidden")) return detailsModal;
+  if (tvSettingsModal && !tvSettingsModal.classList.contains("hidden")) return tvSettingsModal;
   if (!pairingModal.classList.contains("hidden")) return pairingModal;
   if (!sourceModal.classList.contains("hidden")) return sourceModal;
   return document;
@@ -2310,18 +2529,28 @@ async function showAd() {
   return showHouseAd(configuration.houseAd || { enabled: true, durationSeconds: state.config.adDurationSeconds });
 }
 
-video.addEventListener("playing", hidePlayerStatus);
-video.addEventListener("canplay", () => { if (!video.paused) hidePlayerStatus(); });
-video.addEventListener("loadedmetadata", () => updatePlayerQuality(video.videoHeight));
-video.addEventListener("waiting", () => showPlayerStatus("Carregando o sinal…"));
-video.addEventListener("stalled", () => showPlayerStatus("Sinal instável. Reconectando…"));
-video.addEventListener("click", () => { if (!playerModal.classList.contains("hidden")) setWebPlaybackPaused(video, !video.paused); });
+const primaryVideoBindings = new WeakSet();
+function bindPrimaryVideoEvents(media) {
+  if (!media || primaryVideoBindings.has(media)) return;
+  primaryVideoBindings.add(media);
+  media.addEventListener("playing", hidePlayerStatus);
+  media.addEventListener("canplay", () => { if (!media.paused) hidePlayerStatus(); });
+  media.addEventListener("loadedmetadata", () => updatePlayerQuality(media.videoHeight));
+  media.addEventListener("waiting", () => showPlayerStatus("Carregando o sinal…"));
+  media.addEventListener("stalled", () => showPlayerStatus("Sinal instável. Reconectando…"));
+  media.addEventListener("click", () => {
+    if (!playerModal.classList.contains("hidden")) setWebPlaybackPaused(media, !media.paused);
+  });
+}
+bindPrimaryVideoEvents(video);
 retryButton.addEventListener("click", () => state.currentItem && playStream(state.currentItem));
 
 document.addEventListener("click", (event) => {
   const link = event.target.closest("[data-link]");
   if (link) { event.preventDefault(); navigate(link.getAttribute("href")); }
   const action = event.target.closest("[data-action]")?.dataset.action;
+  if (action === "open-tv-settings") openTvSettings();
+  if (action === "toggle-autostart") toggleNativeAutoStart();
   if (action === "open-source" && !event.target.closest("main")) openSource("xtream");
   if (action === "open-pairing" && !event.target.closest("main")) startPairing();
   if (action === "pairing-manual") { closePairing(); openSource("xtream"); }
@@ -2336,6 +2565,8 @@ document.addEventListener("click", (event) => {
 document.querySelectorAll("[data-source-tab]").forEach((tab) => tab.addEventListener("click", () => selectSourceTab(tab.dataset.sourceTab)));
 document.querySelector(".close-modal").addEventListener("click", closeSource);
 document.querySelector(".close-pairing").addEventListener("click", closePairing);
+document.querySelector(".close-tv-settings")?.addEventListener("click", closeTvSettings);
+document.querySelector(".close-tv-settings-primary")?.addEventListener("click", closeTvSettings);
 document.querySelector("#pairing-new-code").addEventListener("click", startPairing);
 document.querySelector(".player-close").addEventListener("click", closePlayer);
 document.querySelector("#details-close").addEventListener("click", () => closeDetails());
@@ -2354,6 +2585,7 @@ document.addEventListener("keydown", (event) => {
   const playPausePressed = [13, 19, 415, 10252].includes(code) || event.key === "Enter" || event.key === " ";
   const favoritePressed = [184, 404].includes(code) || event.key?.toLowerCase?.() === "f";
   const playerOpen = !playerModal.classList.contains("hidden");
+  const nativeOpen = Boolean(document.documentElement.dataset.nativeEngine);
   const liveFullscreen = main.querySelector(".live-preview-stage.live-preview-immersive");
   if (backPressed && (document.fullscreenElement || document.webkitFullscreenElement || liveFullscreen)) {
     event.preventDefault();
@@ -2363,6 +2595,11 @@ document.addEventListener("keydown", (event) => {
     else if (document.webkitFullscreenElement && document.webkitExitFullscreen) {
       try { document.webkitExitFullscreen(); } catch {}
     }
+    return;
+  }
+  if (backPressed && nativeOpen) {
+    event.preventDefault();
+    try { window.GateNativePlayer?.close?.(); } catch {}
     return;
   }
   if (playerOpen) {
@@ -2377,6 +2614,11 @@ document.addEventListener("keydown", (event) => {
     closeDetails();
     return;
   }
+  if (tvSettingsModal && !tvSettingsModal.classList.contains("hidden") && (backPressed || event.key === "Backspace")) {
+    event.preventDefault();
+    closeTvSettings();
+    return;
+  }
   if (favoritePressed) { event.preventDefault(); toggleFocusedFavorite(); return; }
   const editable = event.target?.matches?.("input, textarea, select, [contenteditable='true']");
   if (editable) {
@@ -2389,7 +2631,8 @@ document.addEventListener("keydown", (event) => {
   const directions = { ArrowLeft: "left", ArrowRight: "right", ArrowUp: "up", ArrowDown: "down" };
   if (directions[event.key]) { event.preventDefault(); moveFocus(directions[event.key]); }
   if (backPressed) {
-    if (!pairingModal.classList.contains("hidden")) closePairing();
+    if (tvSettingsModal && !tvSettingsModal.classList.contains("hidden")) closeTvSettings();
+    else if (!pairingModal.classList.contains("hidden")) closePairing();
     else if (!sourceModal.classList.contains("hidden")) closeSource();
     else if (location.pathname !== "/") history.back();
     else if (state.view !== "home") renderHome();

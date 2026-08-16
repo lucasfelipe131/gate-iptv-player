@@ -58,12 +58,12 @@
   window.setTimeout(function () {
     var main = document.getElementById("main-content");
     var rendered = Boolean(main && main.children && main.children.length);
-    diagnostics(rendered ? "ui-ready" : "ui-empty", rendered ? "Interface renderizada" : "A interface não renderizou em 6 segundos", "safe-1.0.0");
+    diagnostics(rendered ? "ui-ready" : "ui-empty", rendered ? "Interface renderizada" : "A interface não renderizou em 6 segundos", "safe-1.1.0");
     if (!rendered && main) {
       main.innerHTML = '<section style="padding:70px;text-align:center"><h1 style="font-size:46px">Recuperando o GATE TV</h1><p style="font-size:22px;color:#aebbd0">Pressione Voltar e abra o aplicativo novamente.</p></section>';
     }
   }, 6000);
 
-  window.GateWebOSSafe = { version: "1.0.0", diagnostics: diagnostics };
-  diagnostics("bootstrap", "Modo seguro LG iniciado", "safe-1.0.0");
+  window.GateWebOSSafe = { version: "1.1.0", diagnostics: diagnostics };
+  diagnostics("bootstrap", "Modo seguro LG iniciado", "safe-1.1.0");
 }());
