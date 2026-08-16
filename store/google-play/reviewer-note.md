@@ -1,0 +1,3 @@
+# Nota sugerida ao revisor
+
+GATE TV é um player independente para Android TV/Google TV. O aplicativo não fornece listas, canais, filmes, séries ou credenciais. Para testar sem dados privados, selecione a opção M3U e informe a URL pública de demonstração indicada em `review-access.md`. O conteúdo de demonstração existe apenas para validar carregamento, navegação por controle e reprodução. Em qualquer erro de publicidade, o app libera imediatamente o catálogo.
