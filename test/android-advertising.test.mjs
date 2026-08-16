@@ -22,7 +22,8 @@ test("Android TV usa o IMA nativo atual com desugaring", () => {
   assert.match(appGradle, /interactivemedia:3\.39\.0/);
   assert.match(appGradle, /coreLibraryDesugaringEnabled true/);
   assert.match(appGradle, /desugar_jdk_libs:2\.1\.5/);
-  assert.match(appGradle, /targetSdk 36/);
+  assert.match(appGradle, /compileSdk 36/);
+  assert.match(appGradle, /targetSdk 35/);
   assert.match(adapter, /implements VideoAdPlayer/);
   assert.match(adapter, /callback\.onAdProgress/);
   assert.match(adapter, /callback\.onEnded/);
