@@ -6,36 +6,39 @@ import { fileURLToPath } from "node:url";
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 
-test("webOS carrega a aplicação hospedada em iframe de tela cheia com recuperação local", async () => {
+test("webOS usa o mesmo layout Android TV, player HTML5 e ponte de controle", async () => {
   const manifest = JSON.parse(await read("platforms/webos/appinfo.json"));
   const html = await read("platforms/webos/index.html");
   const bridge = await read("platforms/webos/bridge.js");
-  const hostedBridge = await read("public/webos-safe-bootstrap.js");
+  const remote = await read("public/webos-remote.js");
   const documentation = await read("platforms/webos/README.md");
 
   assert.equal(manifest.main, "index.html");
   assert.equal(manifest.type, "web");
+  assert.equal(manifest.version, "0.6.7");
   assert.equal(manifest.disableBackHistoryAPI, true);
   assert.match(manifest.appDescription, /webOS TV 22 ou superior/);
   assert.match(documentation, /webOS TV 22 ou superior/);
-  assert.match(documentation, /bundle legado transpilado/);
   assert.match(html, /viewport-fit=cover/);
   assert.match(html, /id="gate-app"/);
   assert.match(html, /frame-src https:\/\/gate-iptv-player-production\.up\.railway\.app/);
   assert.match(html, /allow="autoplay; fullscreen/);
-  assert.match(html, /boot=iframe/);
-  assert.match(html, /bridgeToken=gate-webos-0\.6\.6/);
-  assert.doesNotMatch(html, /http-equiv="refresh"/);
-  assert.match(html, /bridge\.js/);
+  assert.match(html, /platform=androidtv/);
+  assert.match(html, /runtime=webos/);
+  assert.match(html, /layout=androidtv/);
+  assert.match(html, /nativePlayer=html5/);
+  assert.match(html, /bridgeToken=gate-webos-0\.6\.7/);
   assert.match(bridge, /PLATFORM = "webos"/);
+  assert.match(bridge, /UI_PLATFORM = "androidtv"/);
+  assert.match(bridge, /nativePlayer=html5/);
   assert.match(bridge, /contentWindow\.focus\(\)/);
   assert.match(bridge, /postMessage\(/);
-  assert.match(bridge, /gate-webos-ready/);
-  assert.match(bridge, /READY_TIMEOUT_MS/);
+  assert.match(bridge, /setTimeout\(markReady, 850\)/);
   assert.doesNotMatch(bridge, /location\.replace/);
-  assert.match(hostedBridge, /gate-webos-remote/);
-  assert.match(hostedBridge, /gate-webos-ready/);
-  assert.match(hostedBridge, /dispatchRemoteKey/);
+  assert.match(remote, /runtimePlatform === "webos"/);
+  assert.match(remote, /androidTvLayout/);
+  assert.match(remote, /gate-webos-remote/);
+  assert.match(remote, /dispatchBridgedKey/);
   assert.doesNotMatch(bridge, /password|authorization|bearer/i);
 });
 
@@ -71,9 +74,7 @@ test("Smart TV packaging scripts are valid POSIX shell", async () => {
 
   for (const script of ["scripts/package-webos.sh", "scripts/package-tizen.sh"]) {
     const path = fileURLToPath(new URL(`../${script}`, import.meta.url));
-    const result = spawnSync("sh", ["-n", path], {
-      encoding: "utf8"
-    });
+    const result = spawnSync("sh", ["-n", path], { encoding: "utf8" });
     assert.equal(result.status, 0, result.stderr);
   }
 
