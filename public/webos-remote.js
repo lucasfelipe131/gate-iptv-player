@@ -5,11 +5,18 @@
   var params;
   try { params = new URLSearchParams(window.location.search || ""); } catch (_error) { params = { get: function () { return ""; } }; }
   var requestedPlatform = String(params.get("platform") || "").toLowerCase();
-  var isWebOS = requestedPlatform === "webos" || /Web0S|WebOS|NetCast/i.test(ua);
+  var runtimePlatform = String(params.get("runtime") || "").toLowerCase();
+  var bridgeToken = String(params.get("bridgeToken") || "");
+  var isWebOS = requestedPlatform === "webos" || runtimePlatform === "webos" || /Web0S|WebOS|NetCast/i.test(ua);
   if (!isWebOS) return;
 
-  document.body.classList.add("webos-tv", "webos-remote");
-  document.documentElement.setAttribute("data-platform", "webos");
+  var androidTvLayout = requestedPlatform === "androidtv" && runtimePlatform === "webos";
+  document.body.classList.add("webos-remote");
+  if (!androidTvLayout) {
+    document.body.classList.add("webos-tv");
+    document.documentElement.setAttribute("data-platform", "webos");
+  }
+  document.documentElement.setAttribute("data-runtime-platform", "webos");
 
   var lastRemoteFocus = null;
   var lastNavigationAt = 0;
@@ -241,7 +248,7 @@
     return false;
   }
 
-  window.addEventListener("keydown", function (event) {
+  function handleKeyDown(event) {
     var code = Number(event.keyCode || event.which || 0);
     var direction = keyDirection(event, code);
     var active = document.activeElement;
@@ -293,7 +300,38 @@
         ensureFocus();
       }
     }
-  }, true);
+  }
+
+  function defineEventValue(event, name, value) {
+    try { Object.defineProperty(event, name, { configurable: true, enumerable: true, value: value }); }
+    catch (_error) { try { event[name] = value; } catch (_ignored) {} }
+  }
+
+  function dispatchBridgedKey(data) {
+    var synthetic;
+    try {
+      synthetic = document.createEvent("Event");
+      synthetic.initEvent("keydown", true, true);
+    } catch (_error) {
+      return;
+    }
+    var keyCode = Number(data.keyCode || data.which || 0);
+    defineEventValue(synthetic, "key", String(data.key || ""));
+    defineEventValue(synthetic, "code", String(data.code || ""));
+    defineEventValue(synthetic, "keyCode", keyCode);
+    defineEventValue(synthetic, "which", keyCode);
+    defineEventValue(synthetic, "gateWebOSBridge", true);
+    window.dispatchEvent(synthetic);
+  }
+
+  window.addEventListener("message", function (event) {
+    var data = event.data || {};
+    if (event.source !== window.parent || data.type !== "gate-webos-remote") return;
+    if (!bridgeToken || data.token !== bridgeToken) return;
+    dispatchBridgedKey(data);
+  }, false);
+
+  window.addEventListener("keydown", handleKeyDown, true);
 
   document.addEventListener("focusin", function (event) {
     if (event.target && event.target.matches && event.target.matches("[data-focusable]")) markRemoteFocus(event.target);
@@ -315,6 +353,8 @@
   window.GateWebOSRemote = {
     ensureFocus: ensureFocus,
     moveFocus: moveFocus,
-    version: "1.0.1"
+    dispatchBridgedKey: dispatchBridgedKey,
+    androidTvLayout: androidTvLayout,
+    version: "1.1.0"
   };
 }());
