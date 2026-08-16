@@ -15,13 +15,14 @@ android {
     // Real Android/Google TV devices use ARM. Keeping x86/x86_64 native VLC
     // binaries in the TCL package more than doubles the APK and can make older
     // TV package installers reject or truncate it. Generate a compact ARM
-    // universal APK plus architecture-specific fallbacks.
+    // architecture-specific APKs. Combining both VLC ARM engines is still too
+    // large for reliable delivery through some TV browsers/file managers.
     splits {
         abi {
             enable true
             reset()
             include 'armeabi-v7a', 'arm64-v8a'
-            universalApk true
+            universalApk false
         }
     }
 
