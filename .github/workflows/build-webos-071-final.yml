@@ -1,0 +1,55 @@
+name: Build LG webOS 0.7.1 Final
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/build-webos-071-final.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-webos:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout latest main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Validate 0.7.1 input hotfix
+        run: |
+          npm ci
+          node --check public/app.js
+          node --check public/webos-remote.js
+          node --check public/webos-android-runtime.js
+          node --check platforms/webos/bridge.js
+          node -e "const x=JSON.parse(require('fs').readFileSync('platforms/webos/appinfo.json','utf8')); if(x.version!=='0.7.1') throw new Error('Expected webOS 0.7.1')"
+          npm test
+
+      - name: Install LG webOS CLI
+        run: npm install -g @webos-tools/cli
+
+      - name: Build IPK
+        run: |
+          sh scripts/package-webos.sh
+          ls -lh dist/webos
+          test -n "$(find dist/webos -maxdepth 1 -name '*0.7.1*.ipk' -print -quit)"
+
+      - name: Upload final IPK
+        uses: actions/upload-artifact@v4
+        with:
+          name: GATE-TV-LG-webOS-0.7.1-final
+          path: dist/webos/*.ipk
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 90
