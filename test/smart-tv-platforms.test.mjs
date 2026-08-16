@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 
-test("webOS usa o layout Android TV, player HTML5 e inicialização não bloqueante", async () => {
+test("webOS abre o layout Android TV diretamente, sem iframe bloqueando cliques", async () => {
   const manifest = JSON.parse(await read("platforms/webos/appinfo.json"));
   const html = await read("platforms/webos/index.html");
   const bridge = await read("platforms/webos/bridge.js");
@@ -17,48 +17,35 @@ test("webOS usa o layout Android TV, player HTML5 e inicialização não bloquea
 
   assert.equal(manifest.main, "index.html");
   assert.equal(manifest.type, "web");
-  assert.equal(manifest.version, "0.6.8");
+  assert.equal(manifest.version, "0.7.0");
   assert.equal(manifest.disableBackHistoryAPI, true);
-  assert.match(manifest.appDescription, /webOS TV 22 ou superior/);
+  assert.ok(manifest.appDescription.length <= 60);
   assert.match(documentation, /webOS TV 22 ou superior/);
 
   assert.match(html, /viewport-fit=cover/);
-  assert.match(html, /id="gate-app"/);
+  assert.match(html, /http-equiv="refresh"/);
   assert.match(html, /index-webos-android\.html/);
-  assert.match(html, /frame-src https:\/\/gate-iptv-player-production\.up\.railway\.app/);
-  assert.match(html, /allow="autoplay; fullscreen/);
   assert.match(html, /platform=androidtv/);
   assert.match(html, /runtime=webos/);
   assert.match(html, /layout=androidtv/);
   assert.match(html, /nativePlayer=html5/);
-  assert.match(html, /bridgeToken=gate-webos-0\.6\.8/);
-  assert.match(html, /release-boot[^]*3s/);
+  assert.match(html, /shellVersion=0\.7\.0/);
+  assert.doesNotMatch(html, /<iframe/i);
 
   assert.match(bridge, /PLATFORM = "webos"/);
   assert.match(bridge, /UI_PLATFORM = "androidtv"/);
-  assert.match(bridge, /APP_PATH = "\/index-webos-android\.html"/);
-  assert.match(bridge, /SHELL_VERSION = "0\.6\.8"/);
+  assert.match(bridge, /APP_URL = "https:\/\/gate-iptv-player-production\.up\.railway\.app\/index-webos-android\.html"/);
+  assert.match(bridge, /SHELL_VERSION = "0\.7\.0"/);
   assert.match(bridge, /nativePlayer=html5/);
-  assert.match(bridge, /contentWindow\.focus\(\)/);
-  assert.match(bridge, /postMessage\(/);
-  assert.match(bridge, /setTimeout\(markReady, 2800\)/);
-  assert.match(bridge, /bootScreen\.style\.display = "none"/);
-  assert.doesNotMatch(bridge, /location\.replace/);
+  assert.match(bridge, /location\.replace\(buildLaunchUrl/);
+  assert.doesNotMatch(bridge, /contentWindow|postMessage|gate-webos-remote/);
 
-  assert.match(androidLayout, /web-ui\.css\?v=0\.6\.8/);
-  assert.match(androidLayout, /ui-polish\.css\?v=0\.6\.8/);
   assert.match(androidLayout, /webos-android-runtime\.js\?v=0\.6\.8/);
   assert.match(androidLayout, /app\.js\?v=0\.6\.8/);
-
   assert.match(runtime, /Service Worker disabled on LG webOS runtime/);
   assert.match(runtime, /safeConfig\.enableWorker = false/);
-  assert.match(runtime, /gate-webos-ready/);
-  assert.match(runtime, /gate\.adShown/);
-
   assert.match(remote, /runtimePlatform === "webos"/);
   assert.match(remote, /androidTvLayout/);
-  assert.match(remote, /gate-webos-remote/);
-  assert.match(remote, /dispatchBridgedKey/);
   assert.doesNotMatch(bridge, /password|authorization|bearer/i);
 });
 
