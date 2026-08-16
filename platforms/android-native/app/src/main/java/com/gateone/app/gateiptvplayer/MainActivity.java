@@ -18,6 +18,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
 import android.view.KeyEvent;
+import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
@@ -44,6 +45,7 @@ import androidx.media3.exoplayer.DecoderCounters;
 import androidx.media3.exoplayer.DefaultLoadControl;
 import androidx.media3.exoplayer.DefaultRenderersFactory;
 import androidx.media3.exoplayer.ExoPlayer;
+import androidx.media3.exoplayer.trackselection.DefaultTrackSelector;
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
 import androidx.media3.extractor.DefaultExtractorsFactory;
 import androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory;
@@ -72,10 +74,14 @@ import java.util.Map;
 @OptIn(markerClass = UnstableApi.class)
 public final class MainActivity extends Activity {
     private static final String HOME = "https://gate-iptv-player-production.up.railway.app/";
-    private static final String APP_VERSION = "0.6.2";
+    private static final String APP_VERSION = "0.6.4";
     private static final String USER_AGENT = "GATE-TV-NATIVE/" + APP_VERSION;
     static final String PREFERENCES = "gate_tv_preferences";
     static final String PREFERENCE_AUTO_START = "auto_start_on_boot";
+    private static final String PREFERENCE_PLAYER_ENGINE = "player_engine";
+    private static final String PREFERENCE_QUALITY_MODE = "quality_mode";
+    private static final String PREFERENCE_VIDEO_FIT = "video_fit";
+    private static final String PREFERENCE_SCREEN_SIZE = "screen_size";
     private static final String PREFERENCE_WEB_VERSION = "web_shell_version";
 
     // A frozen live stream must recover quickly, but slow channel starts still
@@ -297,7 +303,7 @@ public final class MainActivity extends Activity {
         view.setUseController(false);
         view.setKeepContentOnPlayerReset(false);
         view.setShutterBackgroundColor(Color.BLACK);
-        view.setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_FIT);
+        view.setResizeMode(exoResizeMode());
         view.setVisibility(View.GONE);
         return view;
     }
@@ -393,6 +399,83 @@ public final class MainActivity extends Activity {
                     .putBoolean(PREFERENCE_AUTO_START, enabled)
                     .apply();
         }
+
+        @JavascriptInterface
+        public String getPreferredEngine() {
+            return choicePreference(PREFERENCE_PLAYER_ENGINE, "auto", "auto", "media3", "vlc");
+        }
+
+        @JavascriptInterface
+        public void setPreferredEngine(String value) {
+            String normalized = normalizeChoice(value, "auto", "auto", "media3", "vlc");
+            saveChoicePreference(PREFERENCE_PLAYER_ENGINE, normalized);
+            runOnUiThread(MainActivity.this::restartCurrentPlaybackForPreference);
+        }
+
+        @JavascriptInterface
+        public String getQualityMode() {
+            return choicePreference(PREFERENCE_QUALITY_MODE, "auto", "auto", "stable", "max");
+        }
+
+        @JavascriptInterface
+        public void setQualityMode(String value) {
+            String normalized = normalizeChoice(value, "auto", "auto", "stable", "max");
+            saveChoicePreference(PREFERENCE_QUALITY_MODE, normalized);
+            runOnUiThread(MainActivity.this::restartCurrentPlaybackForPreference);
+        }
+
+        @JavascriptInterface
+        public String getVideoFit() {
+            return choicePreference(PREFERENCE_VIDEO_FIT, "fit", "fit", "zoom", "stretch");
+        }
+
+        @JavascriptInterface
+        public void setVideoFit(String value) {
+            String normalized = normalizeChoice(value, "fit", "fit", "zoom", "stretch");
+            saveChoicePreference(PREFERENCE_VIDEO_FIT, normalized);
+            runOnUiThread(MainActivity.this::applyVideoResizeMode);
+        }
+
+        @JavascriptInterface
+        public String getScreenSize() {
+            return choicePreference(PREFERENCE_SCREEN_SIZE, "100", "100", "95", "90");
+        }
+
+        @JavascriptInterface
+        public void setScreenSize(String value) {
+            String normalized = normalizeChoice(value, "100", "100", "95", "90");
+            saveChoicePreference(PREFERENCE_SCREEN_SIZE, normalized);
+            runOnUiThread(() -> {
+                if (nativePlaying && fullscreen) applyFullscreenBounds();
+            });
+        }
+    }
+
+    private static String normalizeChoice(String value, String fallback, String... allowed) {
+        String normalized = safe(value).toLowerCase(Locale.US);
+        for (String candidate : allowed) if (candidate.equals(normalized)) return normalized;
+        return fallback;
+    }
+
+    private String choicePreference(String key, String fallback, String... allowed) {
+        String value = getSharedPreferences(PREFERENCES, MODE_PRIVATE).getString(key, fallback);
+        return normalizeChoice(value, fallback, allowed);
+    }
+
+    private void saveChoicePreference(String key, String value) {
+        getSharedPreferences(PREFERENCES, MODE_PRIVATE).edit().putString(key, value).apply();
+    }
+
+    private void restartCurrentPlaybackForPreference() {
+        applyVideoResizeMode();
+        if (!nativePlaying || currentRequest == null) return;
+        PlaybackRequest request = currentRequest;
+        boolean wasFullscreen = fullscreen;
+        boolean wasLive = liveSession;
+        startPlayback(request.primaryUrl, request.fallbackUrl, request.name, request.streamType, wasLive);
+        fullscreen = wasFullscreen;
+        if (wasFullscreen) applyFullscreenBounds();
+        else applyPreviewBounds();
     }
 
     private void startOrReusePlayback(String primaryUrl, String fallbackUrl, String name,
@@ -457,18 +540,28 @@ public final class MainActivity extends Activity {
         if (!isSupportedNetworkUrl(url)) return;
         String type = normalizeStreamType(streamType, url);
 
-        // Media3 is always tried before LibVLC. The second Media3 profile keeps
-        // a larger rebuffer reserve for unstable Wi-Fi without retaining the
-        // old 90-second buffer that caused memory pressure on low-RAM TVs.
-        attempts.add(new PlaybackAttempt(Engine.MEDIA3, url, type, false, 0));
-        attempts.add(new PlaybackAttempt(Engine.MEDIA3, url, type, true, 0));
-        attempts.add(new PlaybackAttempt(
+        PlaybackAttempt media3Fast = new PlaybackAttempt(Engine.MEDIA3, url, type, false, 0);
+        PlaybackAttempt media3Resilient = new PlaybackAttempt(Engine.MEDIA3, url, type, true, 0);
+        PlaybackAttempt vlcCompatible = new PlaybackAttempt(
                 Engine.VLC,
                 url,
                 type,
                 true,
                 "hls".equals(type) ? 6_000 : 8_000
-        ));
+        );
+        String preferredEngine = choicePreference(
+                PREFERENCE_PLAYER_ENGINE, "auto", "auto", "media3", "vlc");
+        if ("vlc".equals(preferredEngine)) {
+            attempts.add(vlcCompatible);
+            attempts.add(media3Fast);
+            attempts.add(media3Resilient);
+        } else {
+            // Media3 uses adaptive bitrate and a second, larger buffer profile.
+            // LibVLC remains available as a decoder fallback on difficult feeds.
+            attempts.add(media3Fast);
+            attempts.add(media3Resilient);
+            attempts.add(vlcCompatible);
+        }
     }
 
     private static boolean isSupportedNetworkUrl(String value) {
@@ -653,11 +746,21 @@ public final class MainActivity extends Activity {
         DefaultRenderersFactory renderersFactory = new DefaultRenderersFactory(this)
                 .setEnableDecoderFallback(true);
 
+        DefaultTrackSelector trackSelector = new DefaultTrackSelector(this);
+        DefaultTrackSelector.Parameters.Builder trackParameters = trackSelector.buildUponParameters();
+        if ("stable".equals(choicePreference(
+                PREFERENCE_QUALITY_MODE, "auto", "auto", "stable", "max"))) {
+            trackParameters.setMaxVideoSize(1920, 1080);
+        }
+        trackSelector.setParameters(trackParameters.build());
+
         exoPlayer = new ExoPlayer.Builder(this, renderersFactory)
                 .setMediaSourceFactory(sourceFactory)
                 .setLoadControl(loadControl)
+                .setTrackSelector(trackSelector)
                 .build();
         exoView.setPlayer(exoPlayer);
+        applyVideoResizeMode();
 
         AudioAttributes audioAttributes = new AudioAttributes.Builder()
                 .setUsage(C.USAGE_MEDIA)
@@ -755,6 +858,7 @@ public final class MainActivity extends Activity {
         libVlc = new LibVLC(this, options);
         vlcPlayer = new MediaPlayer(libVlc);
         vlcPlayer.attachViews(vlcView, null, false, false);
+        applyVideoResizeMode();
         vlcPlayer.setVolume(duckedForAudioFocus ? 20 : 100);
         Media media = new Media(libVlc, Uri.parse(playbackUrl));
         media.setHWDecoderEnabled(true, false);
@@ -1015,14 +1119,47 @@ public final class MainActivity extends Activity {
 
     private void applyFullscreenBounds() {
         enterImmersiveMode();
+        int percent;
+        try {
+            percent = Integer.parseInt(choicePreference(
+                    PREFERENCE_SCREEN_SIZE, "100", "100", "95", "90"));
+        } catch (NumberFormatException ignored) {
+            percent = 100;
+        }
+        int rootWidth = root.getWidth() > 0 ? root.getWidth() : getResources().getDisplayMetrics().widthPixels;
+        int rootHeight = root.getHeight() > 0 ? root.getHeight() : getResources().getDisplayMetrics().heightPixels;
+        int width = percent >= 100 ? ViewGroup.LayoutParams.MATCH_PARENT : Math.max(1, rootWidth * percent / 100);
+        int height = percent >= 100 ? ViewGroup.LayoutParams.MATCH_PARENT : Math.max(1, rootHeight * percent / 100);
         FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
+                width,
+                height
         );
+        params.gravity = Gravity.CENTER;
         params.leftMargin = 0;
         params.topMargin = 0;
         playerLayer.setLayoutParams(params);
         playerLayer.setVisibility(View.VISIBLE);
+    }
+
+    private int exoResizeMode() {
+        String mode = choicePreference(PREFERENCE_VIDEO_FIT, "fit", "fit", "zoom", "stretch");
+        if ("zoom".equals(mode)) return AspectRatioFrameLayout.RESIZE_MODE_ZOOM;
+        if ("stretch".equals(mode)) return AspectRatioFrameLayout.RESIZE_MODE_FILL;
+        return AspectRatioFrameLayout.RESIZE_MODE_FIT;
+    }
+
+    private void applyVideoResizeMode() {
+        String mode = choicePreference(PREFERENCE_VIDEO_FIT, "fit", "fit", "zoom", "stretch");
+        if (exoView != null) exoView.setResizeMode(exoResizeMode());
+        if (vlcView != null) {
+            float scale = "zoom".equals(mode) ? 1.12f : 1f;
+            vlcView.setScaleX(scale);
+            vlcView.setScaleY(scale);
+        }
+        if (vlcPlayer != null) {
+            vlcPlayer.setScale(0f);
+            vlcPlayer.setAspectRatio("stretch".equals(mode) ? "16:9" : null);
+        }
     }
 
     private void showState(String message) {

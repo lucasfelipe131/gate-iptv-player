@@ -8,8 +8,8 @@ android {
         applicationId 'com.gateone.app.gateiptvplayer'
         minSdk 23
         targetSdk 35
-        versionCode 62
-        versionName '0.6.2'
+        versionCode 64
+        versionName '0.6.4'
     }
 
     // Real Android/Google TV devices use ARM. Keeping x86/x86_64 native VLC

@@ -25,7 +25,7 @@ O `.wgt` assinado e criado em `dist/tizen/`. Para instalar em uma TV ja
 conectada ao Device Manager:
 
 ```bash
-tizen install -n GATE-TV-Tizen-0.6.2.wgt -t minhaTV
+tizen install -n GATE-TV-Tizen-0.6.4.wgt -t minhaTV
 tizen run -p GATEIPTV01.GateTV -t minhaTV
 ```
 

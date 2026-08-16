@@ -16,11 +16,86 @@
 .android-tv-only { display: none !important; }
 body.android-wrapper .android-tv-only { display: flex !important; }
 
-.tv-settings-card { position: relative; }
+.tv-settings-card {
+  position: relative;
+  width: min(1240px, 96vw) !important;
+  max-height: 94vh;
+  overflow: hidden;
+}
+.tv-settings-card > h2 { margin-bottom: 6px; }
+.tv-settings-sections {
+  max-height: calc(94vh - 230px);
+  margin: 22px 0 18px;
+  padding: 2px 7px 2px 2px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  overflow: auto;
+}
+.tv-settings-section {
+  min-width: 0;
+  padding: 17px;
+  border: 1px solid rgba(255, 255, 255, .12);
+  border-radius: 17px;
+  background: rgba(255, 255, 255, .035);
+}
+.tv-settings-split {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+.tv-setting-heading {
+  min-height: 43px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.tv-setting-heading > span {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(207, 255, 55, .35);
+  border-radius: 10px;
+  background: rgba(207, 255, 55, .08);
+  color: var(--gate-pro-accent);
+  font-size: 11px;
+  font-weight: 900;
+}
+.tv-setting-heading > div { min-width: 0; display: grid; gap: 3px; }
+.tv-setting-heading strong { color: #f4f7fb; font-size: 18px; }
+.tv-setting-heading small { color: var(--gate-pro-muted); font-size: 12px; line-height: 1.3; }
+.tv-choice-row {
+  margin-top: 13px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9px;
+}
+.tv-choice {
+  min-height: 52px;
+  padding: 9px 11px;
+  border: 2px solid rgba(255, 255, 255, .12);
+  border-radius: 12px;
+  background: rgba(3, 9, 18, .62);
+  color: #b8c4d4;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 800;
+  text-align: center;
+}
+.tv-choice.selected {
+  border-color: rgba(207, 255, 55, .72);
+  background: linear-gradient(135deg, rgba(207, 255, 55, .2), rgba(36, 199, 241, .08));
+  color: #f7ffdd;
+  box-shadow: inset 0 0 0 1px rgba(207, 255, 55, .08);
+}
+.tv-autostart-section { align-items: center; }
 .tv-setting-toggle {
   width: 100%;
   min-height: 96px;
-  margin: 28px 0 20px;
+  margin: 0;
   padding: 20px 22px;
   display: flex;
   align-items: center;
@@ -71,6 +146,23 @@ body.android-wrapper .android-tv-only { display: flex !important; }
 }
 .tv-settings-note strong { font-size: 14px; }
 .tv-settings-note span { color: var(--gate-pro-muted); font-size: 13px; line-height: 1.45; }
+.tv-settings-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+.tv-settings-footer > span { color: var(--gate-pro-muted); font-size: 13px; }
+.tv-settings-footer .primary-button { min-width: 170px; }
+
+html[data-video-fit="fit"] .live-preview-stage video,
+html[data-video-fit="fit"] .player-shell video { object-fit: contain !important; }
+html[data-video-fit="zoom"] .live-preview-stage video,
+html[data-video-fit="zoom"] .player-shell video { object-fit: cover !important; }
+html[data-video-fit="stretch"] .live-preview-stage video,
+html[data-video-fit="stretch"] .player-shell video { object-fit: fill !important; }
+html[data-screen-size="95"] .player-modal-immersive .player-shell { width: 95vw !important; height: 95vh !important; }
+html[data-screen-size="90"] .player-modal-immersive .player-shell { width: 90vw !important; height: 90vh !important; }
 
 /* Shared finishing touches. */
 body.gate-browser-polish,
@@ -167,6 +259,16 @@ body.gate-tv-v2 .app-shell {
   grid-template-columns: var(--gate-tv-sidebar) minmax(0, 1fr);
   overflow: hidden;
 }
+
+/* Channel and catalog views use the full panel. The navigation rail exists only
+   on the home screen, while a clear back button remains available in the header. */
+body.gate-tv-v2.catalog-focus-view .app-shell { grid-template-columns: minmax(0, 1fr); }
+body.gate-tv-v2.catalog-focus-view .sidebar { display: none !important; }
+body.gate-tv-v2.catalog-focus-view main { grid-column: 1; }
+body.gate-tv-v2 .browse-back { display: none; }
+body.gate-tv-v2.catalog-focus-view .browse-back { display: grid; }
+body.gate-tv-v2.catalog-focus-view .catalog-titlebar > .round-action[data-action="go-home"] { display: none; }
+body.gate-browser-polish.browser-mode .browse-back { display: none; }
 
 body.gate-tv-v2 .sidebar {
   position: relative;
@@ -322,6 +424,7 @@ body.gate-tv-v2 .topbar {
 }
 
 body.gate-tv-v2 .topbar .top-brand { display: none; }
+body.gate-tv-v2 .topbar-start { display: flex; align-items: center; gap: 13px; }
 
 body.gate-tv-v2 .tv-view-context {
   min-width: 0;
@@ -529,6 +632,14 @@ body.gate-tv-v2 .live-layout {
   gap: 16px;
 }
 
+body.gate-tv-v2.catalog-focus-view .live-layout {
+  grid-template-columns: 240px 650px minmax(0, 1fr);
+}
+
+body.gate-tv-v2.catalog-focus-view .catalog-layout {
+  grid-template-columns: 290px minmax(0, 1fr);
+}
+
 body.gate-tv-v2 .channel-list-head {
   height: 56px;
   padding: 0 17px;
@@ -692,6 +803,7 @@ body.gate-tv-v2 .tv-control-hint {
   box-shadow: 0 16px 46px rgba(0, 0, 0, .42);
   font-size: 11px;
 }
+body.gate-tv-v2.catalog-focus-view .tv-control-hint { max-width: min(980px, calc(100vw - 70px)); }
 
 /* 720p / smaller TV screens. */
 @media (max-width: 1500px), (max-height: 800px) {
@@ -751,6 +863,8 @@ body.gate-tv-v2 .tv-control-hint {
   body.gate-tv-v2 .card-epg { font-size: 9px; }
 
   body.gate-tv-v2 .live-layout { grid-template-columns: 170px 405px minmax(0, 1fr); gap: 9px; }
+  body.gate-tv-v2.catalog-focus-view .live-layout { grid-template-columns: 190px 455px minmax(0, 1fr); }
+  body.gate-tv-v2.catalog-focus-view .catalog-layout { grid-template-columns: 220px minmax(0, 1fr); }
   body.gate-tv-v2 .channel-list-head { height: 39px; padding: 0 10px; font-size: 8px; }
   body.gate-tv-v2 .live-channel-list { height: calc(100% - 39px); padding: 5px; }
   body.gate-tv-v2 .live-channel-row { min-height: 76px; grid-template-columns: 62px minmax(0, 1fr) 27px !important; gap: 9px; padding: 5px 8px; margin-bottom: 4px; border-radius: 10px; }
@@ -788,8 +902,19 @@ body.gate-tv-v2 .tv-control-hint {
   body.gate-tv-v2.android-wrapper .channel-logo { width: 64px; height: 64px; }
   body.gate-tv-v2.android-wrapper .live-channel-row strong { font-size: 17px; }
   body.gate-tv-v2.android-wrapper .live-channel-row small { font-size: 11px; }
-  body.gate-tv-v2 .tv-setting-toggle { min-height: 80px; margin: 18px 0 14px; padding: 15px 18px; }
+  body.gate-tv-v2 .tv-settings-card { padding: 22px; }
+  body.gate-tv-v2 .tv-settings-sections { max-height: calc(94vh - 180px); margin: 12px 0; gap: 9px; }
+  body.gate-tv-v2 .tv-settings-section { padding: 11px; }
+  body.gate-tv-v2 .tv-setting-heading { min-height: 32px; gap: 8px; }
+  body.gate-tv-v2 .tv-setting-heading > span { width: 28px; height: 28px; font-size: 9px; }
+  body.gate-tv-v2 .tv-setting-heading strong { font-size: 14px; }
+  body.gate-tv-v2 .tv-setting-heading small { font-size: 10px; }
+  body.gate-tv-v2 .tv-choice-row { margin-top: 8px; gap: 6px; }
+  body.gate-tv-v2 .tv-choice { min-height: 38px; padding: 6px; border-radius: 8px; font-size: 11px; }
+  body.gate-tv-v2 .tv-setting-toggle { min-height: 64px; padding: 10px 13px; }
   body.gate-tv-v2 .tv-setting-copy strong { font-size: 19px; }
+  body.gate-tv-v2 .tv-setting-copy small { font-size: 10px; }
+  body.gate-tv-v2 .tv-settings-footer > span { font-size: 10px; }
 }
 
 /* 4K scaling. */
@@ -819,6 +944,8 @@ body.gate-tv-v2 .tv-control-hint {
   body.gate-tv-v2 .catalog-layout,
   body.gate-tv-v2 .live-layout { height: calc(100vh - 250px); }
   body.gate-tv-v2 .live-layout { grid-template-columns: 340px 790px minmax(0, 1fr); gap: 24px; }
+  body.gate-tv-v2.catalog-focus-view .live-layout { grid-template-columns: 390px 920px minmax(0, 1fr); }
+  body.gate-tv-v2.catalog-focus-view .catalog-layout { grid-template-columns: 440px minmax(0, 1fr); }
   body.gate-tv-v2 .live-channel-row { min-height: 132px; grid-template-columns: 116px minmax(0, 1fr) 50px !important; }
   body.gate-tv-v2 .channel-logo { width: 110px; height: 110px; border-radius: 22px; }
   body.gate-tv-v2 .live-channel-row strong { font-size: 28px; }
@@ -827,6 +954,13 @@ body.gate-tv-v2 .tv-control-hint {
   body.gate-tv-v2 .catalog-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 21px; }
   body.gate-tv-v2 .poster-grid .media-card { min-height: 440px; }
   body.gate-tv-v2 .media-card strong { font-size: 23px; }
+  body.gate-tv-v2 .tv-settings-card { width: min(1880px, 94vw) !important; padding: 58px; }
+  body.gate-tv-v2 .tv-settings-sections { max-height: calc(94vh - 330px); gap: 22px; margin: 34px 0 28px; }
+  body.gate-tv-v2 .tv-settings-section { padding: 26px; border-radius: 24px; }
+  body.gate-tv-v2 .tv-setting-heading > span { width: 52px; height: 52px; font-size: 16px; }
+  body.gate-tv-v2 .tv-setting-heading strong { font-size: 27px; }
+  body.gate-tv-v2 .tv-setting-heading small { font-size: 18px; }
+  body.gate-tv-v2 .tv-choice { min-height: 78px; font-size: 20px; border-radius: 18px; }
 }
 
 /* Browser 4K: increase information scale instead of leaving a 1080p island. */

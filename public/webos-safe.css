@@ -19,6 +19,7 @@ body.webos-tv.webos-safe-mode .app-shell {
 }
 
 body.webos-tv.webos-safe-mode .sidebar { display: none !important; }
+body.webos-tv.webos-safe-mode .catalog-titlebar > .round-action[data-action="go-home"] { display: none !important; }
 
 body.webos-tv.webos-safe-mode main {
   width: 100% !important;
@@ -219,6 +220,115 @@ body.webos-tv.webos-safe-mode .live-channel-title strong { font-size: 22px !impo
 body.webos-tv.webos-safe-mode .epg-card strong { font-size: 15px !important; }
 body.webos-tv.webos-safe-mode .epg-card p { font-size: 12px !important; }
 
+body.webos-tv.webos-safe-mode .topbar-start {
+  display: flex !important;
+  align-items: center !important;
+  gap: 12px !important;
+}
+
+body.webos-tv.webos-safe-mode .tv-settings-card {
+  position: relative !important;
+  width: min(1200px, 96vw) !important;
+  max-height: 94vh !important;
+  padding: 30px !important;
+  overflow: hidden !important;
+  border-radius: 22px !important;
+  background: #081322 !important;
+}
+
+body.webos-tv.webos-safe-mode .tv-settings-sections {
+  max-height: calc(94vh - 205px) !important;
+  margin: 18px 0 14px !important;
+  padding-right: 5px !important;
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  gap: 12px !important;
+  overflow: auto !important;
+}
+
+body.webos-tv.webos-safe-mode .tv-settings-section {
+  min-width: 0 !important;
+  padding: 15px !important;
+  border: 1px solid rgba(255, 255, 255, .14) !important;
+  border-radius: 15px !important;
+  background: #0c192a !important;
+}
+
+body.webos-tv.webos-safe-mode .tv-settings-split {
+  grid-column: 1 / -1 !important;
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  gap: 16px !important;
+}
+
+body.webos-tv.webos-safe-mode .tv-setting-heading {
+  min-height: 40px !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 10px !important;
+}
+
+body.webos-tv.webos-safe-mode .tv-setting-heading > span {
+  width: 32px !important;
+  height: 32px !important;
+  flex: 0 0 auto !important;
+  display: grid !important;
+  place-items: center !important;
+  border: 1px solid rgba(213, 255, 71, .42) !important;
+  border-radius: 9px !important;
+  background: rgba(213, 255, 71, .08) !important;
+  color: #d5ff47 !important;
+  font-size: 10px !important;
+  font-weight: 900 !important;
+}
+
+body.webos-tv.webos-safe-mode .tv-setting-heading > div { display: grid !important; gap: 3px !important; }
+body.webos-tv.webos-safe-mode .tv-setting-heading strong { color: #f5f8fc !important; font-size: 17px !important; }
+body.webos-tv.webos-safe-mode .tv-setting-heading small { color: #9eacc0 !important; font-size: 11px !important; }
+
+body.webos-tv.webos-safe-mode .tv-choice-row {
+  margin-top: 11px !important;
+  display: grid !important;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  gap: 8px !important;
+}
+
+body.webos-tv.webos-safe-mode .tv-choice {
+  min-height: 48px !important;
+  padding: 8px 9px !important;
+  border: 2px solid rgba(255, 255, 255, .13) !important;
+  border-radius: 11px !important;
+  background: #06101d !important;
+  color: #bac5d4 !important;
+  font-size: 13px !important;
+  font-weight: 800 !important;
+}
+
+body.webos-tv.webos-safe-mode .tv-choice.selected {
+  border-color: #d5ff47 !important;
+  background: #17281d !important;
+  color: #f4ffd2 !important;
+}
+
+body.webos-tv.webos-safe-mode .tv-settings-footer {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  gap: 18px !important;
+}
+
+body.webos-tv.webos-safe-mode .tv-settings-footer > span { color: #9eacc0 !important; font-size: 12px !important; }
+body.webos-tv.webos-safe-mode .tv-settings-footer .primary-button { min-width: 160px !important; }
+
+html[data-video-fit="fit"] .live-preview-stage video,
+html[data-video-fit="fit"] .player-shell video { object-fit: contain !important; }
+html[data-video-fit="zoom"] .live-preview-stage video,
+html[data-video-fit="zoom"] .player-shell video { object-fit: cover !important; }
+html[data-video-fit="stretch"] .live-preview-stage video,
+html[data-video-fit="stretch"] .player-shell video { object-fit: fill !important; }
+html[data-screen-size="95"] .player-modal-immersive .player-shell { width: 95vw !important; height: 95vh !important; }
+html[data-screen-size="90"] .player-modal-immersive .player-shell { width: 90vw !important; height: 90vh !important; }
+
 body.webos-tv.webos-safe-mode .focusable:focus,
 body.webos-tv.webos-safe-mode .remote-focused {
   outline: 4px solid #d5ff47 !important;
@@ -263,6 +373,15 @@ body.webos-tv.webos-safe-mode .preview-glow {
   body.webos-tv.webos-safe-mode .channel-logo { width: 54px !important; height: 54px !important; }
   body.webos-tv.webos-safe-mode .live-preview-stage { height: 280px !important; min-height: 280px !important; }
   body.webos-tv.webos-safe-mode .library-launch { min-height: 170px !important; }
+  body.webos-tv.webos-safe-mode .tv-settings-card { padding: 20px !important; }
+  body.webos-tv.webos-safe-mode .tv-settings-sections { max-height: calc(94vh - 155px) !important; margin: 9px 0 !important; gap: 7px !important; }
+  body.webos-tv.webos-safe-mode .tv-settings-section { padding: 9px !important; }
+  body.webos-tv.webos-safe-mode .tv-setting-heading { min-height: 28px !important; gap: 7px !important; }
+  body.webos-tv.webos-safe-mode .tv-setting-heading > span { width: 25px !important; height: 25px !important; font-size: 8px !important; }
+  body.webos-tv.webos-safe-mode .tv-setting-heading strong { font-size: 13px !important; }
+  body.webos-tv.webos-safe-mode .tv-setting-heading small { font-size: 9px !important; }
+  body.webos-tv.webos-safe-mode .tv-choice-row { margin-top: 6px !important; gap: 5px !important; }
+  body.webos-tv.webos-safe-mode .tv-choice { min-height: 34px !important; padding: 4px !important; font-size: 10px !important; }
 }
 
 @media (min-width: 2500px) and (min-height: 1300px) {
@@ -296,4 +415,11 @@ body.webos-tv.webos-safe-mode .preview-glow {
   body.webos-tv.webos-safe-mode .live-preview-stage { height: 620px !important; min-height: 620px !important; }
   body.webos-tv.webos-safe-mode .focusable:focus,
   body.webos-tv.webos-safe-mode .remote-focused { outline-width: 6px !important; outline-offset: 4px !important; }
+  body.webos-tv.webos-safe-mode .tv-settings-card { width: min(1850px, 94vw) !important; padding: 52px !important; }
+  body.webos-tv.webos-safe-mode .tv-settings-sections { max-height: calc(94vh - 310px) !important; gap: 22px !important; margin: 30px 0 25px !important; }
+  body.webos-tv.webos-safe-mode .tv-settings-section { padding: 25px !important; border-radius: 23px !important; }
+  body.webos-tv.webos-safe-mode .tv-setting-heading > span { width: 50px !important; height: 50px !important; font-size: 15px !important; }
+  body.webos-tv.webos-safe-mode .tv-setting-heading strong { font-size: 26px !important; }
+  body.webos-tv.webos-safe-mode .tv-setting-heading small { font-size: 17px !important; }
+  body.webos-tv.webos-safe-mode .tv-choice { min-height: 76px !important; font-size: 20px !important; border-radius: 17px !important; }
 }

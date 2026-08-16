@@ -18,10 +18,10 @@ const [html, shellHtml, css, bootstrap, remote, server, docker, appinfo, bridge,
 ]);
 
 test("LG recebe HTML leve e conecta somente o adaptador nativo necessário", () => {
-  assert.match(html, /webos-safe\.css\?v=0\.6\.2/);
-  assert.match(html, /webos-safe-bootstrap\.js\?v=0\.6\.2/);
-  assert.match(html, /webos-remote-safe\.js\?v=0\.6\.2/);
-  assert.match(html, /platform-player\.js\?v=0\.6\.2[^]*app\.js\?v=0\.6\.2/);
+  assert.match(html, /webos-safe\.css\?v=0\.6\.4/);
+  assert.match(html, /webos-safe-bootstrap\.js\?v=0\.6\.4/);
+  assert.match(html, /webos-remote-safe\.js\?v=0\.6\.4/);
+  assert.match(html, /platform-player\.js\?v=0\.6\.4[^]*app\.js\?v=0\.6\.4/);
   assert.doesNotMatch(html, /tizen-loader\.js/);
   assert.doesNotMatch(html, /web-ui\.css/);
   assert.doesNotMatch(html, /ui-polish\.css/);
@@ -58,14 +58,14 @@ test("todos os scripts de TV são convertidos para Chromium 79", () => {
   assert.match(docker, /public\/webos-remote-safe\.js/);
 });
 
-test("novo IPK webOS 0.6.3 abre como app hospedado sem depender de iframe", () => {
+test("novo IPK webOS 0.6.4 abre como app hospedado sem depender de iframe", () => {
   const info = JSON.parse(appinfo);
-  assert.equal(info.version, "0.6.3");
+  assert.equal(info.version, "0.6.4");
   assert.equal(info.supportTouchMode, "virtual");
   assert.match(shellHtml, /http-equiv="refresh"/);
-  assert.match(shellHtml, /shellVersion=0\.6\.3/);
+  assert.match(shellHtml, /shellVersion=0\.6\.4/);
   assert.doesNotMatch(shellHtml, /<iframe/i);
-  assert.match(bridge, /SHELL_VERSION = "0\.6\.3"/);
+  assert.match(bridge, /SHELL_VERSION = "0\.6\.4"/);
   assert.match(bridge, /location\.replace\(buildLaunchUrl\(\)\)/);
   assert.match(bridge, /boot=hosted/);
   assert.doesNotMatch(bridge, /parent-webos|gate-native-player/);
@@ -104,7 +104,7 @@ test("boot webOS redireciona online e mantém recuperação focável offline", (
   const online = executeBoot(true);
   assert.match(online.redirectedTo, /^https:\/\/gate-iptv-player-production\.up\.railway\.app\/\?/);
   assert.match(online.redirectedTo, /platform=webos/);
-  assert.match(online.redirectedTo, /shellVersion=0\.6\.3/);
+  assert.match(online.redirectedTo, /shellVersion=0\.6\.4/);
   assert.match(online.redirectedTo, /boot=hosted/);
 
   const offline = executeBoot(false);

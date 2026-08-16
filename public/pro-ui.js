@@ -2,7 +2,7 @@
   "use strict";
 
   var STYLE_ID = "gate-ui-polish-2";
-  var STYLE_URL = "/ui-polish.css?v=0.6.2";
+  var STYLE_URL = "/ui-polish.css?v=0.6.4";
 
   function ensurePolishStyle() {
     if (document.getElementById(STYLE_ID)) return;
@@ -171,6 +171,7 @@
     document.body.classList.toggle("player-open", view === "player");
     document.body.classList.toggle("modal-open", view === "details" || view === "source" || view === "pairing" || view === "settings");
     document.body.classList.toggle("ad-open", view === "ad");
+    document.body.classList.toggle("catalog-focus-view", ["live", "movies", "series", "catalog", "favorites"].indexOf(view) >= 0);
     document.body.setAttribute("data-gate-view", view);
   }
 

@@ -139,7 +139,7 @@
     try {
       avplay.open(url);
       displayRect(target.fullscreen ? null : target.bounds);
-      try { avplay.setStreamingProperty("USER_AGENT", "GATE-TV-TIZEN/0.6.2"); } catch {}
+      try { avplay.setStreamingProperty("USER_AGENT", "GATE-TV-TIZEN/0.6.4"); } catch {}
       try { avplay.setStreamingProperty("IS_LIVE", target.live ? "true" : "false"); } catch {}
       avplay.setListener({
         onbufferingstart() {

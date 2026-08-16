@@ -14,16 +14,16 @@ const [html, app, css, polish, proJs, sw, server] = await Promise.all([
 ]);
 
 test("publica uma camada visual exclusiva da Web depois das camadas de TV", () => {
-  const base = html.indexOf("/styles.css?v=0.6.2");
-  const tv = html.indexOf("/pro-ui.css?v=0.6.2");
-  const web = html.indexOf("/web-ui.css?v=0.6.2");
-  const polishIndex = html.indexOf("/ui-polish.css?v=0.6.2");
+  const base = html.indexOf("/styles.css?v=0.6.4");
+  const tv = html.indexOf("/pro-ui.css?v=0.6.4");
+  const web = html.indexOf("/web-ui.css?v=0.6.4");
+  const polishIndex = html.indexOf("/ui-polish.css?v=0.6.4");
   assert.ok(base >= 0);
   assert.ok(tv > base);
   assert.ok(web > tv);
   assert.ok(polishIndex > web);
-  assert.match(html, /app\.js\?v=0\.6\.2/);
-  assert.match(html, /pro-ui\.js\?v=0\.6\.2/);
+  assert.match(html, /app\.js\?v=0\.6\.4/);
+  assert.match(html, /pro-ui\.js\?v=0\.6\.4/);
   assert.match(css, /body\.browser-mode \.sidebar[^]*display:\s*flex/);
   assert.match(css, /grid-template-columns:\s*var\(--web-sidebar\) minmax\(0, 1fr\)/);
   assert.match(proJs, /gate-browser-polish/);
@@ -58,10 +58,10 @@ test("pareamento e assinatura recebem hierarquia Web sem mudar seus contratos", 
 });
 
 test("rollout usa revisão nova, não salva erros e revalida CSS e JS", () => {
-  assert.match(sw, /gate-player-v20-stability-layout-0-6-2/);
-  assert.match(sw, /web-ui\.css\?v=0\.6\.2/);
-  assert.match(sw, /ui-polish\.css\?v=0\.6\.2/);
-  assert.match(sw, /pro-ui\.js\?v=0\.6\.2/);
+  assert.match(sw, /gate-player-v21-clean-tv-settings-0-6-4/);
+  assert.match(sw, /web-ui\.css\?v=0\.6\.4/);
+  assert.match(sw, /ui-polish\.css\?v=0\.6\.4/);
+  assert.match(sw, /pro-ui\.js\?v=0\.6\.4/);
   assert.match(sw, /if \(response\.ok\)/);
   assert.match(sw, /event\.waitUntil\(caches\.open\(CACHE\)/);
   assert.match(sw, /key\.startsWith\(CACHE_PREFIX\)/);
