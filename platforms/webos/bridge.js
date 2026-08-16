@@ -3,9 +3,10 @@
 
   var PLATFORM = "webos";
   var UI_PLATFORM = "androidtv";
-  var SHELL_VERSION = "0.6.7";
+  var SHELL_VERSION = "0.6.8";
   var APP_ORIGIN = "https://gate-iptv-player-production.up.railway.app";
-  var BRIDGE_TOKEN = "gate-webos-0.6.7";
+  var APP_PATH = "/index-webos-android.html";
+  var BRIDGE_TOKEN = "gate-webos-0.6.8";
   var READY_TIMEOUT_MS = 20000;
   var frame = null;
   var bootScreen = null;
@@ -16,7 +17,7 @@
   var ready = false;
 
   function buildLaunchUrl(cacheBust) {
-    var url = APP_ORIGIN + "/?platform=" + encodeURIComponent(UI_PLATFORM)
+    var url = APP_ORIGIN + APP_PATH + "?platform=" + encodeURIComponent(UI_PLATFORM)
       + "&runtime=" + encodeURIComponent(PLATFORM)
       + "&layout=androidtv"
       + "&nativePlayer=html5"
@@ -45,6 +46,16 @@
     readyTimer = null;
   }
 
+  function showBoot() {
+    if (!bootScreen) return;
+    bootScreen.hidden = false;
+    bootScreen.style.display = "flex";
+    bootScreen.style.opacity = "1";
+    bootScreen.style.visibility = "visible";
+    bootScreen.style.pointerEvents = "auto";
+    bootScreen.classList.remove("ready", "failed");
+  }
+
   function hideRetry() {
     if (retryButton) retryButton.classList.add("hidden");
     if (spinner) spinner.classList.remove("hidden");
@@ -53,10 +64,8 @@
   function showFailure(message) {
     ready = false;
     clearReadyTimer();
-    if (bootScreen) {
-      bootScreen.classList.remove("ready");
-      bootScreen.classList.add("failed");
-    }
+    showBoot();
+    if (bootScreen) bootScreen.classList.add("failed");
     if (spinner) spinner.classList.add("hidden");
     if (retryButton) {
       retryButton.classList.remove("hidden");
@@ -72,10 +81,16 @@
     if (bootScreen) {
       bootScreen.classList.remove("failed");
       bootScreen.classList.add("ready");
+      bootScreen.setAttribute("aria-hidden", "true");
+      bootScreen.style.opacity = "0";
+      bootScreen.style.visibility = "hidden";
+      bootScreen.style.pointerEvents = "none";
+      bootScreen.style.display = "none";
+      bootScreen.hidden = true;
     }
     focusFrame();
-    root.setTimeout(focusFrame, 180);
-    root.setTimeout(focusFrame, 700);
+    root.setTimeout(focusFrame, 120);
+    root.setTimeout(focusFrame, 500);
   }
 
   function startReadyTimeout() {
@@ -88,7 +103,7 @@
   function loadApp(cacheBust) {
     if (!frame) return;
     ready = false;
-    if (bootScreen) bootScreen.classList.remove("ready", "failed");
+    showBoot();
     hideRetry();
     setStatus(navigator.onLine === false
       ? "A TV está sem internet. Reconecte a rede para continuar."
@@ -150,8 +165,8 @@
       markReady();
       return;
     }
-    if (data.type === "gate-webos-error") {
-      showFailure(String(data.message || "A interface não respondeu."));
+    if (data.type === "gate-webos-error" && !ready) {
+      setStatus(String(data.message || "Finalizando a interface…"));
     }
   }
 
@@ -167,7 +182,7 @@
     frame.addEventListener("load", function () {
       setStatus("Finalizando a abertura do GATE TV…");
       focusFrame();
-      root.setTimeout(markReady, 850);
+      root.setTimeout(markReady, 250);
     });
     frame.addEventListener("error", function () {
       showFailure("Não foi possível carregar o aplicativo. Verifique a internet e tente novamente.");
@@ -179,15 +194,13 @@
     root.addEventListener("keydown", onKeyDown, true);
     root.addEventListener("online", function () { if (!ready) loadApp(true); });
     root.addEventListener("offline", function () {
-      showFailure("A TV está sem internet. Reconecte a rede e pressione OK.");
+      if (!ready) showFailure("A TV está sem internet. Reconecte a rede e pressione OK.");
     });
     document.addEventListener("pointerdown", focusFrame, true);
 
     startReadyTimeout();
     focusFrame();
-    root.setTimeout(function () {
-      if (!ready && navigator.onLine !== false) markReady();
-    }, 3500);
+    root.setTimeout(markReady, 2800);
   }
 
   root.GateWebOSBoot = Object.freeze({
