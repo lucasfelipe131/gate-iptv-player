@@ -1,0 +1,60 @@
+/* LG webOS input stability layer 0.7.1 */
+html[data-runtime-platform="webos"],
+html[data-runtime-platform="webos"] body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+body.webos-runtime .modal:not(.hidden),
+body.webos-android-runtime .modal:not(.hidden) {
+  position: fixed !important;
+  z-index: 12000 !important;
+  top: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  left: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  pointer-events: auto !important;
+  overflow: hidden !important;
+}
+
+body.webos-runtime #pairing-modal .pairing-card,
+body.webos-android-runtime #pairing-modal .pairing-card {
+  width: min(1500px, 94vw) !important;
+  max-height: 92vh !important;
+  overflow: auto !important;
+}
+
+body.webos-runtime #pairing-qr.ready,
+body.webos-android-runtime #pairing-qr.ready {
+  display: block !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+}
+
+body.webos-runtime [data-focusable]:focus,
+body.webos-runtime .remote-focused,
+body.webos-android-runtime [data-focusable]:focus,
+body.webos-android-runtime .remote-focused {
+  outline: 5px solid #d5ff47 !important;
+  outline-offset: 3px !important;
+  box-shadow: 0 0 0 7px rgba(213, 255, 71, .18) !important;
+  z-index: 12020 !important;
+}
+
+body.webos-runtime .tv-control-hint,
+body.webos-android-runtime .tv-control-hint {
+  display: none !important;
+}
+
+body.webos-runtime *,
+body.webos-android-runtime * {
+  scroll-behavior: auto !important;
+}

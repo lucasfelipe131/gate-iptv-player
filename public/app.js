@@ -23,6 +23,8 @@ const WEB_STREAM_BUFFER = Object.freeze({
 });
 const catalogGroupCache = new WeakMap();
 const catalogSearchCache = new WeakMap();
+let pairingGeneration = 0;
+let pairingStartPromise = null;
 
 function readJsonStorage(key, fallback) {
   try { return JSON.parse(localStorage.getItem(key) || "") ?? fallback; }
@@ -131,7 +133,12 @@ async function api(path, options = {}) {
     headers: { "content-type": "application/json", ...(options.headers || {}) }
   });
   const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.error || "Não foi possível concluir.");
+  if (!response.ok) {
+    const error = new Error(payload.error || "Não foi possível concluir.");
+    error.status = response.status;
+    error.retryAfterSeconds = Number(response.headers.get("retry-after") || payload.retryAfterSeconds || 0);
+    throw error;
+  }
   return payload;
 }
 
@@ -813,9 +820,11 @@ function trustedQrDataUrl(value) {
   return /^data:image\/svg\+xml;base64,[A-Za-z0-9+/]+={0,2}$/.test(dataUrl) ? dataUrl : "";
 }
 
-function clearPairingSession() {
+function clearPairingSession({ invalidate = true } = {}) {
+  if (invalidate) pairingGeneration += 1;
   stopPairingTimers(state.pairing);
   state.pairing = null;
+  if (invalidate) pairingStartPromise = null;
 }
 
 function stopPairingTimers(pairing) {
@@ -872,9 +881,13 @@ async function pollPairingSession() {
     const status = await api(`/api/pairing/${encodeURIComponent(pairing.code)}`);
     if (state.pairing !== pairing) return;
     pairing.status = status.status;
+    pairing.nextPollDelay = 0;
     if (status.status === "pending") return updatePairingCountdown();
     if (status.status === "expired") {
-      document.querySelector("#pairing-status").textContent = "Código expirado. Gere um novo para continuar.";
+      const statusElement = document.querySelector("#pairing-status");
+      statusElement.textContent = "Código expirado. Gere um novo para continuar.";
+      statusElement.classList.add("error");
+      stopPairingTimers(pairing);
       return;
     }
     if (status.status !== "ready") return;
@@ -892,14 +905,60 @@ async function pollPairingSession() {
     if (state.pairing !== pairing) return;
     pairing.consuming = false;
     const statusElement = document.querySelector("#pairing-status");
+    if (error.status === 429) {
+      pairing.nextPollDelay = Math.max(6_000, Number(error.retryAfterSeconds || 0) * 1_000);
+      statusElement.textContent = "Conexão segura mantida. Aguardando alguns segundos…";
+      statusElement.classList.remove("error");
+      return;
+    }
+    pairing.nextPollDelay = 5_000;
     statusElement.textContent = error.message;
     statusElement.classList.add("error");
   }
 }
 
-async function startPairing() {
-  clearPairingSession();
+function schedulePairingPoll(pairing, delay = 4_000) {
+  if (!pairing || state.pairing !== pairing) return;
+  if (pairing.pollTimer) clearTimeout(pairing.pollTimer);
+  pairing.pollTimer = setTimeout(async () => {
+    pairing.pollTimer = null;
+    if (state.pairing !== pairing || pairing.consuming) return;
+    await pollPairingSession();
+    if (state.pairing === pairing && pairing.status === "pending" && !pairing.consuming) {
+      const nextDelay = pairing.nextPollDelay || 4_000;
+      pairing.nextPollDelay = 0;
+      schedulePairingPoll(pairing, nextDelay);
+    }
+  }, Math.max(1_500, Number(delay) || 4_000));
+}
+
+function focusPairingModal() {
+  refreshFocusable();
+  setTimeout(() => {
+    const target = pairingModal.querySelector("#pairing-new-code, [data-action='pairing-manual'], .close-pairing");
+    try { target?.focus(); } catch {}
+    try { window.GateWebOSRemote?.ensureFocus?.(); } catch {}
+  }, 35);
+}
+
+async function startPairing(options = {}) {
+  const force = options?.force === true;
+  if (!force && pairingStartPromise) {
+    pairingModal.classList.remove("hidden");
+    focusPairingModal();
+    return pairingStartPromise;
+  }
+  if (!force && !pairingModal.classList.contains("hidden") && state.pairing) {
+    focusPairingModal();
+    return state.pairing;
+  }
+
+  const generation = ++pairingGeneration;
+  stopPairingTimers(state.pairing);
+  state.pairing = null;
   pairingModal.classList.remove("hidden");
+  pairingModal.setAttribute("aria-busy", "true");
+
   const qr = document.querySelector("#pairing-qr");
   const loader = document.querySelector("#pairing-qr-loading");
   const code = document.querySelector("#pairing-code");
@@ -911,23 +970,64 @@ async function startPairing() {
   code.textContent = "••••-••••";
   status.className = "pairing-status";
   status.textContent = "Preparando conexão segura…";
-  try {
-    const payload = await api("/api/pairing/sessions", { method: "POST", body: JSON.stringify({ deviceId: getDeviceId() }) });
-    state.pairing = { ...payload, status: "pending", consuming: false, pollTimer: null, countdownTimer: null };
-    code.textContent = payload.code;
-    qr.onload = () => { qr.classList.add("ready"); loader.classList.add("hidden"); };
-    qr.onerror = () => { loader.innerHTML = "<span>Use o código ao lado em outro aparelho.</span>"; };
-    const qrDataUrl = trustedQrDataUrl(payload.qrDataUrl);
-    if (!qrDataUrl) throw new Error("O servidor não retornou um QR Code local válido.");
-    qr.src = qrDataUrl;
-    updatePairingCountdown();
-    state.pairing.pollTimer = setInterval(pollPairingSession, 1_750);
-    state.pairing.countdownTimer = setInterval(updatePairingCountdown, 1_000);
-  } catch (error) {
-    loader.classList.add("hidden");
-    status.textContent = error.message;
-    status.classList.add("error");
-  }
+  focusPairingModal();
+
+  const request = (async () => {
+    try {
+      const payload = await api("/api/pairing/sessions", {
+        method: "POST",
+        body: JSON.stringify({ deviceId: getDeviceId() })
+      });
+      if (generation !== pairingGeneration) return null;
+
+      const pairing = {
+        ...payload,
+        generation,
+        status: "pending",
+        consuming: false,
+        pollTimer: null,
+        countdownTimer: null,
+        nextPollDelay: 0
+      };
+      state.pairing = pairing;
+      code.textContent = payload.code;
+      qr.onload = () => {
+        if (state.pairing !== pairing) return;
+        qr.classList.add("ready");
+        loader.classList.add("hidden");
+      };
+      qr.onerror = () => {
+        if (state.pairing === pairing) loader.innerHTML = "<span>Use o código ao lado em outro aparelho.</span>";
+      };
+      const qrDataUrl = trustedQrDataUrl(payload.qrDataUrl);
+      if (!qrDataUrl) throw new Error("O servidor não retornou um QR Code local válido.");
+      qr.src = qrDataUrl;
+      pairingModal.setAttribute("aria-busy", "false");
+      updatePairingCountdown();
+      schedulePairingPoll(pairing, 2_500);
+      pairing.countdownTimer = setInterval(updatePairingCountdown, 1_000);
+      focusPairingModal();
+      return pairing;
+    } catch (error) {
+      if (generation !== pairingGeneration) return null;
+      loader.classList.add("hidden");
+      pairingModal.setAttribute("aria-busy", "false");
+      status.textContent = error.message;
+      status.classList.add("error");
+      return null;
+    } finally {
+      if (generation === pairingGeneration) pairingStartPromise = null;
+    }
+  })();
+
+  pairingStartPromise = request;
+  return request;
+}
+
+function requestPairing(force = false) {
+  const activationKey = force ? "pairing:new-code" : "pairing:open";
+  if (!allowActivation(activationKey, force ? 700 : 900)) return pairingStartPromise;
+  return startPairing({ force });
 }
 
 function normalizePairCode(value) {
@@ -2369,7 +2469,7 @@ function syncPrimaryNavigation() {
 function bindDynamicActions() {
   syncPrimaryNavigation();
   main.querySelectorAll("[data-action=open-source]").forEach((button) => button.addEventListener("click", () => openSource(button.dataset.tab || "xtream")));
-  main.querySelectorAll("[data-action=open-pairing]").forEach((button) => button.addEventListener("click", startPairing));
+  main.querySelectorAll("[data-action=open-pairing]").forEach((button) => button.addEventListener("click", () => requestPairing(false)));
   main.querySelector("[data-action=toggle-live-favorite]")?.addEventListener("click", () => state.selectedLive && toggleFavorite(state.selectedLive, "live"));
   main.querySelectorAll("[data-live-select]:not([data-action-bound])").forEach((button) => {
     button.dataset.actionBound = "true";
@@ -2414,7 +2514,9 @@ function bindDynamicActions() {
 
 function setupTvEnvironment() {
   const ua = navigator.userAgent || "";
-  const requestedPlatform = new URLSearchParams(location.search).get("platform") || "";
+  const environmentParams = new URLSearchParams(location.search);
+  const requestedPlatform = environmentParams.get("platform") || "";
+  const runtimePlatform = String(environmentParams.get("runtime") || "").toLowerCase();
   const platform = requestedPlatform.toLowerCase();
   const androidWrapper = /^android(?:tv)?$/i.test(requestedPlatform) || /GATE-IPTV-PLAYER\/\d/i.test(ua);
   const tv = ["androidtv", "webos", "tizen"].includes(platform) || /Tizen|Web0S|WebOS|NetCast|SMART-TV|SmartTV|Android TV|AFT|BRAVIA/i.test(ua);
@@ -2422,10 +2524,11 @@ function setupTvEnvironment() {
   document.body.classList.toggle("tv-optimized", tv);
   document.body.classList.toggle("browser-mode", !tv);
   document.body.classList.toggle("android-wrapper", androidWrapper);
+  document.body.classList.toggle("webos-runtime", runtimePlatform === "webos");
   document.body.classList.toggle("native-player", nativePlayerAvailable());
   document.body.classList.toggle("touch-mode", Boolean(touch));
   document.documentElement.dataset.platform = tv ? "tv" : androidWrapper ? "android-app" : "browser";
-  document.documentElement.dataset.tvPlatform = platform || (tv ? "generic" : "");
+  document.documentElement.dataset.tvPlatform = runtimePlatform === "webos" ? "webos" : platform || (tv ? "generic" : "");
   if (window.tizen?.tvinputdevice) {
     try { window.tizen.tvinputdevice.registerKeyBatch(["MediaPlay", "MediaPause", "MediaPlayPause", "MediaStop", "ColorF0Red", "ColorF1Green"]); } catch {}
   }
@@ -2794,10 +2897,10 @@ document.addEventListener("click", (event) => {
   if (["set-player-engine", "set-quality-mode", "set-video-fit", "set-screen-size"].includes(action)) {
     updatePlayerSetting(action, event.target.closest("[data-setting-value]")?.dataset.settingValue);
   }
-  if (action === "settings-open-pairing") { closeTvSettings(); startPairing(); }
+  if (action === "settings-open-pairing") { closeTvSettings(); requestPairing(false); }
   if (action === "settings-open-source") { closeTvSettings(); openSource("xtream"); }
   if (action === "open-source" && !event.target.closest("main")) openSource("xtream");
-  if (action === "open-pairing" && !event.target.closest("main")) startPairing();
+  if (action === "open-pairing" && !event.target.closest("main")) requestPairing(false);
   if (action === "pairing-manual") { closePairing(); openSource("xtream"); }
   if (action === "open-live") state.channels.length ? ensureCatalog("live") : openSource("xtream");
   if (action === "open-movies") state.source ? ensureCatalog("movies") : openSource("xtream");
@@ -2812,7 +2915,7 @@ document.querySelector(".close-modal").addEventListener("click", closeSource);
 document.querySelector(".close-pairing").addEventListener("click", closePairing);
 document.querySelector(".close-tv-settings")?.addEventListener("click", closeTvSettings);
 document.querySelector(".close-tv-settings-primary")?.addEventListener("click", closeTvSettings);
-document.querySelector("#pairing-new-code").addEventListener("click", startPairing);
+document.querySelector("#pairing-new-code").addEventListener("click", () => requestPairing(true));
 document.querySelector(".player-close").addEventListener("click", closePlayer);
 document.querySelector("#details-close").addEventListener("click", () => closeDetails());
 document.querySelector("#details-cancel").addEventListener("click", () => closeDetails());
@@ -2928,7 +3031,8 @@ async function boot() {
   if (!restored) route();
   showAd().catch(() => completeInitialAd());
   if (restored) reconnectSavedSource();
-  if ("serviceWorker" in navigator) {
+  const runtimePlatform = String(new URLSearchParams(location.search).get("runtime") || "").toLowerCase();
+  if ("serviceWorker" in navigator && runtimePlatform !== "webos") {
     navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" })
       .then((registration) => registration.update())
       .catch(() => {});

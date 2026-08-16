@@ -15,7 +15,8 @@
 
   document.documentElement.setAttribute("data-runtime-platform", "webos");
   document.documentElement.setAttribute("data-layout-platform", "androidtv");
-  document.body.classList.add("webos-android-runtime");
+  document.body.classList.add("webos-android-runtime", "webos-runtime");
+  document.documentElement.setAttribute("data-tv-platform", "webos");
 
   try { sessionStorage.setItem("gate.adShown", "true"); } catch (_error) {}
 
@@ -118,7 +119,7 @@
   });
 
   root.GateWebOSAndroidRuntime = {
-    version: "0.6.8",
+    version: "0.7.1",
     runtime: "webos",
     layout: "androidtv",
     markReady: markReady

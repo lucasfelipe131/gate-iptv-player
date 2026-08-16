@@ -53,9 +53,9 @@ test("scripts usados em TVs antigas continuam convertidos para Chromium 79", () 
   assert.match(docker, /public\/webos-remote-safe\.js/);
 });
 
-test("IPK 0.7.0 abre o layout Android TV na janela principal", () => {
+test("IPK 0.7.1 abre o layout Android TV na janela principal", () => {
   const info = JSON.parse(appinfo);
-  assert.equal(info.version, "0.7.0");
+  assert.equal(info.version, "0.7.1");
   assert.equal(info.supportTouchMode, "virtual");
   assert.ok(info.appDescription.length <= 60);
   assert.match(shellHtml, /http-equiv="refresh"/);
@@ -63,10 +63,10 @@ test("IPK 0.7.0 abre o layout Android TV na janela principal", () => {
   assert.match(shellHtml, /platform=androidtv/);
   assert.match(shellHtml, /runtime=webos/);
   assert.match(shellHtml, /nativePlayer=html5/);
-  assert.match(shellHtml, /shellVersion=0\.7\.0/);
+  assert.match(shellHtml, /shellVersion=0\.7\.1/);
   assert.doesNotMatch(shellHtml, /<iframe/i);
 
-  assert.match(bridge, /SHELL_VERSION = "0\.7\.0"/);
+  assert.match(bridge, /SHELL_VERSION = "0\.7\.1"/);
   assert.match(bridge, /APP_URL = "https:\/\/gate-iptv-player-production\.up\.railway\.app\/index-webos-android\.html"/);
   assert.match(bridge, /UI_PLATFORM = "androidtv"/);
   assert.match(bridge, /nativePlayer=html5/);
@@ -75,10 +75,10 @@ test("IPK 0.7.0 abre o layout Android TV na janela principal", () => {
 });
 
 test("runtime webOS desativa cache antigo e força MPEG-TS sem Worker", () => {
-  assert.match(androidHtml, /web-ui\.css\?v=0\.6\.8/);
-  assert.match(androidHtml, /ui-polish\.css\?v=0\.6\.8/);
-  assert.match(androidHtml, /webos-android-runtime\.js\?v=0\.6\.8/);
-  assert.match(androidHtml, /platform-player\.js\?v=0\.6\.8[^]*app\.js\?v=0\.6\.8/);
+  assert.match(androidHtml, /web-ui\.css\?v=0\.7\.1/);
+  assert.match(androidHtml, /ui-polish\.css\?v=0\.7\.1/);
+  assert.match(androidHtml, /webos-android-runtime\.js\?v=0\.7\.1/);
+  assert.match(androidHtml, /platform-player\.js\?v=0\.7\.1[^]*app\.js\?v=0\.7\.1/);
   assert.match(runtime, /getRegistrations/);
   assert.match(runtime, /Service Worker disabled on LG webOS runtime/);
   assert.match(runtime, /safeConfig\.enableWorker = false/);

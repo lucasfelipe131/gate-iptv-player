@@ -21,6 +21,8 @@
   var lastRemoteFocus = null;
   var lastNavigationAt = 0;
   var focusTimer = 0;
+  var lastActivationAt = 0;
+  var lastActivationTarget = null;
 
   function isVisible(element) {
     if (!element || !element.isConnected || element.disabled) return false;
@@ -32,14 +34,13 @@
   }
 
   function activeScope() {
-    var player = document.getElementById("player-modal");
-    var details = document.getElementById("details-modal");
-    var source = document.getElementById("source-modal");
-    if (player && !player.classList.contains("hidden")) return player;
-    if (details && !details.classList.contains("hidden")) return details;
-    if (source && !source.classList.contains("hidden")) return source;
-    return document;
+  var ids = ["ad-overlay", "player-modal", "details-modal", "tv-settings-modal", "pairing-modal", "source-modal"];
+  for (var index = 0; index < ids.length; index += 1) {
+    var node = document.getElementById(ids[index]);
+    if (node && !node.classList.contains("hidden")) return node;
   }
+  return document;
+}
 
   function focusables(scope) {
     var root = scope || activeScope();
@@ -279,27 +280,33 @@
     }
 
     if (code === 13 || event.key === "Enter") {
-      if (isEditable(active)) return;
+    if (isEditable(active)) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (event.repeat) return;
 
-      if (active && active.matches && active.matches(".live-channel-row.active")) {
-        var previewStage = document.querySelector(".live-preview-stage");
-        if (previewStage && typeof previewStage.click === "function") {
-          event.preventDefault();
-          event.stopImmediatePropagation();
-          previewStage.click();
-          return;
-        }
-      }
+    var now = Date.now();
+    if (active && active === lastActivationTarget && now - lastActivationAt < 700) return;
 
-      if (active && active !== document.body && active !== document.documentElement && typeof active.click === "function") {
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        active.click();
-        scheduleEnsureFocus(90);
-      } else {
-        ensureFocus();
+    if (active && active.matches && active.matches(".live-channel-row.active")) {
+      var previewStage = document.querySelector(".live-preview-stage");
+      if (previewStage && typeof previewStage.click === "function") {
+        lastActivationTarget = active;
+        lastActivationAt = now;
+        previewStage.click();
+        return;
       }
     }
+
+    if (active && active !== document.body && active !== document.documentElement && typeof active.click === "function") {
+      lastActivationTarget = active;
+      lastActivationAt = now;
+      active.click();
+      scheduleEnsureFocus(90);
+    } else {
+      ensureFocus();
+    }
+  }
   }
 
   function defineEventValue(event, name, value) {
@@ -331,7 +338,18 @@
     dispatchBridgedKey(data);
   }, false);
 
-  window.addEventListener("keydown", handleKeyDown, true);
+  document.addEventListener("click", function (event) {
+  if (!event.isTrusted || !lastActivationTarget) return;
+  if (Date.now() - lastActivationAt >= 700) return;
+  var target = event.target;
+  var sameTarget = target === lastActivationTarget
+    || (lastActivationTarget.contains && lastActivationTarget.contains(target));
+  if (!sameTarget) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+}, true);
+
+window.addEventListener("keydown", handleKeyDown, true);
 
   document.addEventListener("focusin", function (event) {
     if (event.target && event.target.matches && event.target.matches("[data-focusable]")) markRemoteFocus(event.target);
@@ -355,6 +373,6 @@
     moveFocus: moveFocus,
     dispatchBridgedKey: dispatchBridgedKey,
     androidTvLayout: androidTvLayout,
-    version: "1.1.0"
+    version: "1.2.0"
   };
 }());

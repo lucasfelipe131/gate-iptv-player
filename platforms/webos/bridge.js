@@ -3,7 +3,7 @@
 
   var PLATFORM = "webos";
   var UI_PLATFORM = "androidtv";
-  var SHELL_VERSION = "0.7.0";
+  var SHELL_VERSION = "0.7.1";
   var APP_URL = "https://gate-iptv-player-production.up.railway.app/index-webos-android.html";
   var redirected = false;
   var statusNode = null;

@@ -17,7 +17,7 @@ test("webOS abre o layout Android TV diretamente, sem iframe bloqueando cliques"
 
   assert.equal(manifest.main, "index.html");
   assert.equal(manifest.type, "web");
-  assert.equal(manifest.version, "0.7.0");
+  assert.equal(manifest.version, "0.7.1");
   assert.equal(manifest.disableBackHistoryAPI, true);
   assert.ok(manifest.appDescription.length <= 60);
   assert.match(documentation, /webOS TV 22 ou superior/);
@@ -29,19 +29,19 @@ test("webOS abre o layout Android TV diretamente, sem iframe bloqueando cliques"
   assert.match(html, /runtime=webos/);
   assert.match(html, /layout=androidtv/);
   assert.match(html, /nativePlayer=html5/);
-  assert.match(html, /shellVersion=0\.7\.0/);
+  assert.match(html, /shellVersion=0\.7\.1/);
   assert.doesNotMatch(html, /<iframe/i);
 
   assert.match(bridge, /PLATFORM = "webos"/);
   assert.match(bridge, /UI_PLATFORM = "androidtv"/);
   assert.match(bridge, /APP_URL = "https:\/\/gate-iptv-player-production\.up\.railway\.app\/index-webos-android\.html"/);
-  assert.match(bridge, /SHELL_VERSION = "0\.7\.0"/);
+  assert.match(bridge, /SHELL_VERSION = "0\.7\.1"/);
   assert.match(bridge, /nativePlayer=html5/);
   assert.match(bridge, /location\.replace\(buildLaunchUrl/);
   assert.doesNotMatch(bridge, /contentWindow|postMessage|gate-webos-remote/);
 
-  assert.match(androidLayout, /webos-android-runtime\.js\?v=0\.6\.8/);
-  assert.match(androidLayout, /app\.js\?v=0\.6\.8/);
+  assert.match(androidLayout, /webos-android-runtime\.js\?v=0\.7\.1/);
+  assert.match(androidLayout, /app\.js\?v=0\.7\.1/);
   assert.match(runtime, /Service Worker disabled on LG webOS runtime/);
   assert.match(runtime, /safeConfig\.enableWorker = false/);
   assert.match(remote, /runtimePlatform === "webos"/);
