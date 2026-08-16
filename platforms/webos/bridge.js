@@ -3,30 +3,23 @@
 
   var PLATFORM = "webos";
   var UI_PLATFORM = "androidtv";
-  var SHELL_VERSION = "0.6.8";
-  var APP_ORIGIN = "https://gate-iptv-player-production.up.railway.app";
-  var APP_PATH = "/index-webos-android.html";
-  var BRIDGE_TOKEN = "gate-webos-0.6.8";
-  var READY_TIMEOUT_MS = 20000;
-  var frame = null;
-  var bootScreen = null;
+  var SHELL_VERSION = "0.7.0";
+  var APP_URL = "https://gate-iptv-player-production.up.railway.app/index-webos-android.html";
+  var redirected = false;
   var statusNode = null;
   var spinner = null;
   var retryButton = null;
-  var readyTimer = null;
-  var ready = false;
 
   function buildLaunchUrl(cacheBust) {
-    var url = APP_ORIGIN + APP_PATH + "?platform=" + encodeURIComponent(UI_PLATFORM)
+    var url = APP_URL + "?platform=" + encodeURIComponent(UI_PLATFORM)
       + "&runtime=" + encodeURIComponent(PLATFORM)
       + "&layout=androidtv"
       + "&nativePlayer=html5"
       + "&shellVersion=" + encodeURIComponent(SHELL_VERSION)
       + "&revision=" + encodeURIComponent(SHELL_VERSION)
       + "&appVersion=" + encodeURIComponent(SHELL_VERSION)
-      + "&boot=iframe"
-      + "&embedded=1"
-      + "&bridgeToken=" + encodeURIComponent(BRIDGE_TOKEN);
+      + "&boot=direct"
+      + "&embedded=0";
     if (cacheBust) url += "&reload=" + encodeURIComponent(String(Date.now()));
     return url;
   }
@@ -35,172 +28,63 @@
     if (statusNode) statusNode.textContent = message;
   }
 
-  function focusFrame() {
-    if (!frame) return;
-    try { frame.focus(); } catch (_error) {}
-    try { frame.contentWindow.focus(); } catch (_error) {}
-  }
-
-  function clearReadyTimer() {
-    if (readyTimer) root.clearTimeout(readyTimer);
-    readyTimer = null;
-  }
-
-  function showBoot() {
-    if (!bootScreen) return;
-    bootScreen.hidden = false;
-    bootScreen.style.display = "flex";
-    bootScreen.style.opacity = "1";
-    bootScreen.style.visibility = "visible";
-    bootScreen.style.pointerEvents = "auto";
-    bootScreen.classList.remove("ready", "failed");
-  }
-
-  function hideRetry() {
-    if (retryButton) retryButton.classList.add("hidden");
-    if (spinner) spinner.classList.remove("hidden");
-  }
-
-  function showFailure(message) {
-    ready = false;
-    clearReadyTimer();
-    showBoot();
-    if (bootScreen) bootScreen.classList.add("failed");
+  function showRetry(message) {
+    redirected = false;
+    setStatus(message || "Não foi possível abrir o GATE TV. Verifique a internet e tente novamente.");
     if (spinner) spinner.classList.add("hidden");
     if (retryButton) {
       retryButton.classList.remove("hidden");
       try { retryButton.focus(); } catch (_error) {}
     }
-    setStatus(message || "Não foi possível abrir o GATE. Verifique a internet e recarregue.");
   }
 
-  function markReady() {
-    if (ready) return;
-    ready = true;
-    clearReadyTimer();
-    if (bootScreen) {
-      bootScreen.classList.remove("failed");
-      bootScreen.classList.add("ready");
-      bootScreen.setAttribute("aria-hidden", "true");
-      bootScreen.style.opacity = "0";
-      bootScreen.style.visibility = "hidden";
-      bootScreen.style.pointerEvents = "none";
-      bootScreen.style.display = "none";
-      bootScreen.hidden = true;
+  function openApp(cacheBust) {
+    if (redirected) return;
+    if (root.navigator && root.navigator.onLine === false) {
+      showRetry("A TV está sem internet. Reconecte a rede e pressione OK.");
+      return;
     }
-    focusFrame();
-    root.setTimeout(focusFrame, 120);
-    root.setTimeout(focusFrame, 500);
-  }
-
-  function startReadyTimeout() {
-    clearReadyTimer();
-    readyTimer = root.setTimeout(function () {
-      if (!ready) showFailure("A interface demorou para responder. Pressione OK para recarregar.");
-    }, READY_TIMEOUT_MS);
-  }
-
-  function loadApp(cacheBust) {
-    if (!frame) return;
-    ready = false;
-    showBoot();
-    hideRetry();
-    setStatus(navigator.onLine === false
-      ? "A TV está sem internet. Reconecte a rede para continuar."
-      : "Abrindo a interface otimizada para sua TV LG…");
-    frame.src = buildLaunchUrl(Boolean(cacheBust));
-    startReadyTimeout();
-  }
-
-  function forwardRemoteKey(event) {
-    if (!frame || !frame.contentWindow) return false;
-    var keyCode = Number(event.keyCode || event.which || 0);
-    if ([13, 19, 27, 37, 38, 39, 40, 413, 415, 417, 461, 10009, 10252].indexOf(keyCode) < 0
-        && event.key !== "Enter" && event.key !== "BrowserBack" && event.key !== "Escape") return false;
+    redirected = true;
+    setStatus("Abrindo o aplicativo diretamente na sua TV LG…");
     try {
-      frame.contentWindow.postMessage({
-        type: "gate-webos-remote",
-        token: BRIDGE_TOKEN,
-        key: String(event.key || ""),
-        code: String(event.code || ""),
-        keyCode: keyCode,
-        which: keyCode
-      }, APP_ORIGIN);
-      focusFrame();
-      return true;
+      root.location.replace(buildLaunchUrl(Boolean(cacheBust)));
     } catch (_error) {
-      return false;
+      redirected = false;
+      try {
+        root.location.href = buildLaunchUrl(Boolean(cacheBust));
+      } catch (_secondError) {
+        showRetry();
+      }
     }
   }
 
   function onKeyDown(event) {
-    var keyCode = Number(event.keyCode || event.which || 0);
-    var retryVisible = retryButton && !retryButton.classList.contains("hidden");
-    if (retryVisible && (keyCode === 13 || event.key === "Enter")) {
+    var code = Number(event.keyCode || event.which || 0);
+    if ((code === 13 || event.key === "Enter") && retryButton && !retryButton.classList.contains("hidden")) {
       event.preventDefault();
-      event.stopImmediatePropagation();
-      loadApp(true);
+      openApp(true);
       return;
     }
-    if (!ready && (keyCode === 461 || keyCode === 10009 || event.key === "BrowserBack" || event.key === "Escape")) {
+    if (code === 461 || code === 10009 || event.key === "BrowserBack" || event.key === "Escape") {
       event.preventDefault();
       try { root.close(); } catch (_error) {}
-      return;
-    }
-    if (forwardRemoteKey(event)) {
-      event.preventDefault();
-      event.stopImmediatePropagation();
-    }
-  }
-
-  function onMessage(event) {
-    if (!frame || event.source !== frame.contentWindow || event.origin !== APP_ORIGIN) return;
-    var data = event.data || {};
-    if (data.token !== BRIDGE_TOKEN) return;
-    if (data.type === "gate-webos-booting") {
-      setStatus("Carregando interface e controle remoto…");
-      return;
-    }
-    if (data.type === "gate-webos-ready") {
-      markReady();
-      return;
-    }
-    if (data.type === "gate-webos-error" && !ready) {
-      setStatus(String(data.message || "Finalizando a interface…"));
     }
   }
 
   function initialize() {
-    frame = document.getElementById("gate-app");
-    bootScreen = document.getElementById("boot-screen");
     statusNode = document.getElementById("status");
     spinner = document.getElementById("spinner");
     retryButton = document.getElementById("retry");
 
-    if (!frame || !bootScreen) return;
-
-    frame.addEventListener("load", function () {
-      setStatus("Finalizando a abertura do GATE TV…");
-      focusFrame();
-      root.setTimeout(markReady, 250);
-    });
-    frame.addEventListener("error", function () {
-      showFailure("Não foi possível carregar o aplicativo. Verifique a internet e tente novamente.");
-    });
-
-    if (retryButton) retryButton.addEventListener("click", function () { loadApp(true); });
-
-    root.addEventListener("message", onMessage, false);
+    if (retryButton) retryButton.addEventListener("click", function () { openApp(true); });
     root.addEventListener("keydown", onKeyDown, true);
-    root.addEventListener("online", function () { if (!ready) loadApp(true); });
-    root.addEventListener("offline", function () {
-      if (!ready) showFailure("A TV está sem internet. Reconecte a rede e pressione OK.");
-    });
-    document.addEventListener("pointerdown", focusFrame, true);
+    root.addEventListener("online", function () { openApp(true); });
+    root.addEventListener("offline", function () { showRetry("A TV está sem internet. Reconecte a rede e pressione OK."); });
 
-    startReadyTimeout();
-    focusFrame();
-    root.setTimeout(markReady, 2800);
+    root.setTimeout(function () { openApp(false); }, 0);
+    root.setTimeout(function () {
+      if (!redirected) showRetry();
+    }, 8000);
   }
 
   root.GateWebOSBoot = Object.freeze({
@@ -208,8 +92,7 @@
     uiPlatform: UI_PLATFORM,
     version: SHELL_VERSION,
     launchUrl: buildLaunchUrl,
-    reload: function () { loadApp(true); },
-    focus: focusFrame
+    open: function () { openApp(true); }
   });
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", initialize);
