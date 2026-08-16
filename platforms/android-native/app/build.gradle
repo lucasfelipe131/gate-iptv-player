@@ -1,5 +1,13 @@
 plugins { id 'com.android.application' }
 
+def releaseSigningValues = [
+    storePath: System.getenv('ANDROID_KEYSTORE_PATH'),
+    storePassword: System.getenv('ANDROID_KEYSTORE_PASSWORD'),
+    keyAlias: System.getenv('ANDROID_KEY_ALIAS'),
+    keyPassword: System.getenv('ANDROID_KEY_PASSWORD')
+]
+def hasReleaseSigning = releaseSigningValues.values().every { value -> value != null && !value.trim().isEmpty() }
+
 android {
     namespace 'com.gateone.app.gateiptvplayer'
     compileSdk 36
@@ -13,16 +21,42 @@ android {
     }
 
     // Real Android/Google TV devices use ARM. Keeping x86/x86_64 native VLC
-    // binaries in the TCL package more than doubles the APK and can make older
-    // TV package installers reject or truncate it. Generate compact ARM
-    // architecture-specific APKs. Combining both VLC ARM engines is still too
-    // large for reliable delivery through some TV browsers/file managers.
+    // binaries in the sideload package more than doubles the APK and can make
+    // older TV installers reject or truncate it. Debug builds remain split by
+    // architecture; Google Play receives one AAB and creates device splits.
     splits {
         abi {
             enable true
             reset()
             include 'armeabi-v7a', 'arm64-v8a'
             universalApk false
+        }
+    }
+
+    bundle {
+        abi { enableSplit = true }
+        density { enableSplit = true }
+        language { enableSplit = false }
+    }
+
+    signingConfigs {
+        if (hasReleaseSigning) {
+            release {
+                storeFile file(releaseSigningValues.storePath)
+                storePassword releaseSigningValues.storePassword
+                keyAlias releaseSigningValues.keyAlias
+                keyPassword releaseSigningValues.keyPassword
+                enableV1Signing true
+                enableV2Signing true
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            shrinkResources false
+            if (hasReleaseSigning) signingConfig signingConfigs.release
         }
     }
 

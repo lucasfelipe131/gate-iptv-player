@@ -1,4 +1,4 @@
-name: Build GATE TV Android APK
+name: Build GATE TV Android APK and AAB
 
 on:
   workflow_dispatch:
@@ -50,19 +50,25 @@ jobs:
         with:
           gradle-version: "8.13"
 
-      - name: Build and lint TCL ARM APKs
+      - name: Build and lint Android TV packages
         working-directory: platforms/android-native
-        run: gradle --no-daemon :app:lintDebug :app:assembleDebug
+        run: gradle --no-daemon :app:lintDebug :app:assembleDebug :app:bundleRelease
 
-      - name: Prepare TCL APKs and checksums
+      - name: Prepare APKs, unsigned Play bundle and checksums
         run: |
           set -euo pipefail
           mkdir -p dist
           apk_dir=platforms/android-native/app/build/outputs/apk/debug
-          install -m 0444 "$apk_dir/app-arm64-v8a-debug.apk" dist/GATE-TV-v0.6.5-TCL-ARM64.apk
-          install -m 0444 "$apk_dir/app-armeabi-v7a-debug.apk" dist/GATE-TV-v0.6.5-TCL-ARM32.apk
+          bundle=platforms/android-native/app/build/outputs/bundle/release/app-release.aab
+          apk64=dist/GATE-TV-v0.6.5-TCL-ARM64.apk
+          apk32=dist/GATE-TV-v0.6.5-TCL-ARM32.apk
+          aab=dist/GATE-TV-v0.6.5-Google-Play-unsigned.aab
 
-          for apk in dist/*.apk; do
+          install -m 0444 "$apk_dir/app-arm64-v8a-debug.apk" "$apk64"
+          install -m 0444 "$apk_dir/app-armeabi-v7a-debug.apk" "$apk32"
+          install -m 0444 "$bundle" "$aab"
+
+          for apk in "$apk64" "$apk32"; do
             stat -c '%n %s bytes' "$apk"
             unzip -tq "$apk"
             "$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -P 16 4 "$apk"
@@ -70,18 +76,35 @@ jobs:
             test "$(stat -c %s "$apk")" -lt 188743680
           done
 
-          unzip -Z1 dist/GATE-TV-v0.6.5-TCL-ARM64.apk | grep -q '^lib/arm64-v8a/'
-          unzip -Z1 dist/GATE-TV-v0.6.5-TCL-ARM32.apk | grep -q '^lib/armeabi-v7a/'
-          ! unzip -Z1 dist/GATE-TV-v0.6.5-TCL-ARM64.apk | grep -qE '^lib/(armeabi-v7a|x86|x86_64)/'
-          ! unzip -Z1 dist/GATE-TV-v0.6.5-TCL-ARM32.apk | grep -qE '^lib/(arm64-v8a|x86|x86_64)/'
+          unzip -tq "$aab"
+          unzip -Z1 "$aab" > "$RUNNER_TEMP/gate-aab-files.txt"
+          grep -q '^base/lib/arm64-v8a/' "$RUNNER_TEMP/gate-aab-files.txt"
+          grep -q '^base/lib/armeabi-v7a/' "$RUNNER_TEMP/gate-aab-files.txt"
+          if grep -qE '^base/lib/(x86|x86_64)/' "$RUNNER_TEMP/gate-aab-files.txt"; then
+            echo "::error title=Arquitetura inesperada::O AAB contém bibliotecas x86/x86_64."
+            exit 1
+          fi
+
+          unzip -Z1 "$apk64" > "$RUNNER_TEMP/gate-apk64-files.txt"
+          unzip -Z1 "$apk32" > "$RUNNER_TEMP/gate-apk32-files.txt"
+          grep -q '^lib/arm64-v8a/' "$RUNNER_TEMP/gate-apk64-files.txt"
+          grep -q '^lib/armeabi-v7a/' "$RUNNER_TEMP/gate-apk32-files.txt"
+          if grep -qE '^lib/(armeabi-v7a|x86|x86_64)/' "$RUNNER_TEMP/gate-apk64-files.txt"; then
+            echo "::error title=APK ARM64 contaminado::O APK ARM64 contém outra arquitetura."
+            exit 1
+          fi
+          if grep -qE '^lib/(arm64-v8a|x86|x86_64)/' "$RUNNER_TEMP/gate-apk32-files.txt"; then
+            echo "::error title=APK ARM32 contaminado::O APK ARM32 contém outra arquitetura."
+            exit 1
+          fi
 
           cd dist
-          sha256sum ./*.apk | sed 's#  \./#  #' > GATE-TV-v0.6.5-SHA256.txt
+          sha256sum ./*.apk ./*.aab | sed 's#  \./#  #' > GATE-TV-v0.6.5-SHA256.txt
           sha256sum -c GATE-TV-v0.6.5-SHA256.txt
 
       - uses: actions/upload-artifact@v4
         with:
-          name: GATE-TV-v0.6.5-TCL-ARM32-ARM64
+          name: GATE-TV-v0.6.5-Android-APK-AAB
           path: dist/GATE-TV-v0.6.5-*
           if-no-files-found: error
           compression-level: 0
