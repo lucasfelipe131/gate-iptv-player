@@ -6,10 +6,11 @@ import { fileURLToPath } from "node:url";
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 
-test("webOS usa boot hospedado oficial com fallback local", async () => {
+test("webOS carrega a aplicação hospedada em iframe de tela cheia com recuperação local", async () => {
   const manifest = JSON.parse(await read("platforms/webos/appinfo.json"));
   const html = await read("platforms/webos/index.html");
   const bridge = await read("platforms/webos/bridge.js");
+  const hostedBridge = await read("public/webos-safe-bootstrap.js");
   const documentation = await read("platforms/webos/README.md");
 
   assert.equal(manifest.main, "index.html");
@@ -19,15 +20,22 @@ test("webOS usa boot hospedado oficial com fallback local", async () => {
   assert.match(documentation, /webOS TV 22 ou superior/);
   assert.match(documentation, /bundle legado transpilado/);
   assert.match(html, /viewport-fit=cover/);
-  assert.match(html, /http-equiv="refresh"/);
-  assert.match(html, /boot=hosted/);
-  assert.doesNotMatch(html, /<iframe/i);
+  assert.match(html, /id="gate-app"/);
+  assert.match(html, /frame-src https:\/\/gate-iptv-player-production\.up\.railway\.app/);
+  assert.match(html, /allow="autoplay; fullscreen/);
+  assert.match(html, /boot=iframe/);
+  assert.match(html, /bridgeToken=gate-webos-0\.6\.6/);
+  assert.doesNotMatch(html, /http-equiv="refresh"/);
   assert.match(html, /bridge\.js/);
-  assert.match(bridge, /platform", "webos"|PLATFORM = "webos"/);
-  assert.match(bridge, /location\.replace\(buildLaunchUrl\(\)\)/);
-  assert.match(bridge, /navigator\.onLine === false/);
-  assert.match(bridge, /GateWebOSBoot/);
-  assert.doesNotMatch(bridge, /parent-webos|postMessage|createElement\("video"\)/);
+  assert.match(bridge, /PLATFORM = "webos"/);
+  assert.match(bridge, /contentWindow\.focus\(\)/);
+  assert.match(bridge, /postMessage\(/);
+  assert.match(bridge, /gate-webos-ready/);
+  assert.match(bridge, /READY_TIMEOUT_MS/);
+  assert.doesNotMatch(bridge, /location\.replace/);
+  assert.match(hostedBridge, /gate-webos-remote/);
+  assert.match(hostedBridge, /gate-webos-ready/);
+  assert.match(hostedBridge, /dispatchRemoteKey/);
   assert.doesNotMatch(bridge, /password|authorization|bearer/i);
 });
 
