@@ -89,9 +89,10 @@ test("store documentation covers review, data safety and LG QA", () => {
   assert.match(read("store/lg/ux-scenario.md"), /review-demo\.m3u/);
 });
 
-test("webOS metadata describes the real LG player", () => {
+test("webOS metadata describes the real LG player within Seller Lounge limits", () => {
   assert.equal(webOsInfo.id, "com.gateone.app.gateiptvplayer");
   assert.equal(webOsInfo.title, "GATE TV");
-  assert.match(webOsInfo.appDescription, /LG webOS TV/);
+  assert.match(webOsInfo.appDescription, /webOS TV 22 ou superior/);
+  assert.ok(webOsInfo.appDescription.length <= 60);
   assert.doesNotMatch(webOsInfo.appDescription, /interface Android TV/i);
 });
