@@ -1,9 +1,9 @@
 # GATE TV para LG webOS
 
-Cliente separado para TVs LG. O shell local mantém a aplicação oficial em um
-iframe e o elemento de vídeo no contexto assinado do pacote. Assim o watchdog e
-o decoder webOS permanecem ativos durante toda a sessão, inclusive depois que a
-interface hospedada termina de carregar.
+Cliente separado para TVs LG. A versão 0.6.3 segue o modelo oficial de aplicativo
+hospedado do webOS: o shell local redireciona a janela principal para a aplicação
+de produção. O JavaScript faz a abertura imediata e um `meta refresh` independente
+funciona como fallback caso o motor da TV não execute o script inicial.
 
 ## Compatibilidade atual
 
@@ -13,8 +13,9 @@ bundle legado transpilado, mantido como uma trilha de distribuição separada. A
 restrição deve ser aplicada também na seleção de modelos do LG Seller Lounge.
 
 A rota hospedada `?platform=webos` mantém o modo seguro leve: sem Service Worker
-e sem as camadas visuais pesadas do navegador, mas agora com o pequeno adaptador
-que entrega o vídeo ao decoder e ao watchdog do shell local.
+e sem as camadas visuais pesadas do navegador. O player webOS usa o watchdog do
+núcleo compartilhado para refazer a conexão, alternar rotas e recriar a superfície
+de vídeo quando a imagem parar ou ficar preta.
 
 ## Empacotar em `.ipk`
 
@@ -28,33 +29,20 @@ sh scripts/package-webos.sh
 O arquivo é criado em `dist/webos/`. Para testar no aparelho:
 
 ```bash
-ares-install -d myTV dist/webos/com.gateone.app.gateiptvplayer_0.6.2_all.ipk
+ares-install -d myTV dist/webos/com.gateone.app.gateiptvplayer_0.6.3_all.ipk
 ares-launch -d myTV com.gateone.app.gateiptvplayer
 ```
 
-## Ponte de player
+## Inicialização e recuperação
 
-`bridge.js` expõe `window.GateWebOSBridge` e recebe comandos de reprodução por
-`postMessage`. Cada recuperação destrói e recria o elemento `<video>`, renova a
-rota segura e ignora callbacks de tentativas antigas. O watchdog monitora o
-relógio, o buffer e os quadros realmente apresentados para detectar inclusive o
-caso em que o áudio continua, mas a imagem fica preta.
-
-Ao receber `platform=webos`, `public/platform-player.js` publica o mesmo
-contrato `GateNativePlayer` usado pelo núcleo compartilhado:
-
-```js
-window.GateNativePlayer.preview(url, fallbackUrl, name, type, x, y, width, height);
-window.GateNativePlayer.playFullscreen(url, fallbackUrl, name, type);
-window.GateNativePlayer.close();
-```
-
-- O iframe aceita somente a origem oficial de produção. O servidor libera como
-  ancestrais apenas o próprio site e esquemas locais de aplicativos de TV.
-- A cada tentativa, o shell cria uma nova superfície e acrescenta um
-  identificador de renovação somente às rotas internas do GATE.
-- A recuperação alterna as rotas principal e reserva indefinidamente com
-  backoff limitado, sem deixar timers de um canal antigo abrirem outro fluxo.
+- `bridge.js` abre a origem oficial com `location.replace`, como app hospedado.
+- `index.html` contém um segundo redirecionamento declarativo após quatro
+  segundos; assim o IPK não permanece preso na abertura se o script local falhar.
+- Sem internet, o shell mantém uma mensagem clara e deixa o botão de nova
+  tentativa focado para o controle remoto.
+- A reprodução continua protegida pelo watchdog da aplicação hospedada, que
+  acompanha relógio, buffer e quadros apresentados e recria o decoder quando
+  detecta vídeo preto.
 - O shell não registra lista, usuário, senha ou URL de canal em logs.
 
 Teclas principais: Voltar `461`, OK `13`, setas `37/38/39/40`, Play `415`,

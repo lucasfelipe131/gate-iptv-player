@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import vm from "node:vm";
 
 const read = (file) => readFile(new URL(`../${file}`, import.meta.url), "utf8");
-const [html, css, bootstrap, remote, server, docker, appinfo, bridge, platformPlayer] = await Promise.all([
+const [html, shellHtml, css, bootstrap, remote, server, docker, appinfo, bridge, platformPlayer] = await Promise.all([
   read("public/index-webos.html"),
+  read("platforms/webos/index.html"),
   read("public/webos-safe.css"),
   read("public/webos-safe-bootstrap.js"),
   read("public/webos-remote-safe.js"),
@@ -56,12 +58,58 @@ test("todos os scripts de TV são convertidos para Chromium 79", () => {
   assert.match(docker, /public\/webos-remote-safe\.js/);
 });
 
-test("novo IPK webOS inicia na revisão segura 0.6.2 com decoder no shell", () => {
+test("novo IPK webOS 0.6.3 abre como app hospedado sem depender de iframe", () => {
   const info = JSON.parse(appinfo);
-  assert.equal(info.version, "0.6.2");
+  assert.equal(info.version, "0.6.3");
   assert.equal(info.supportTouchMode, "virtual");
-  assert.match(bridge, /SHELL_VERSION = "0\.6\.2"/);
-  assert.match(bridge, /searchParams\.set\("safe", "1"\)/);
-  assert.match(bridge, /searchParams\.set\("nativePlayer", "parent-webos"\)/);
-  assert.match(bridge, /requestVideoFrameCallback/);
+  assert.match(shellHtml, /http-equiv="refresh"/);
+  assert.match(shellHtml, /shellVersion=0\.6\.3/);
+  assert.doesNotMatch(shellHtml, /<iframe/i);
+  assert.match(bridge, /SHELL_VERSION = "0\.6\.3"/);
+  assert.match(bridge, /location\.replace\(buildLaunchUrl\(\)\)/);
+  assert.match(bridge, /boot=hosted/);
+  assert.doesNotMatch(bridge, /parent-webos|gate-native-player/);
+});
+
+test("boot webOS redireciona online e mantém recuperação focável offline", () => {
+  function executeBoot(online) {
+    let readyHandler;
+    let redirectedTo = "";
+    const status = { textContent: "" };
+    const retry = {
+      disabled: false,
+      textContent: "",
+      addEventListener() {},
+      focus() { this.focused = true; }
+    };
+    const context = {
+      navigator: { onLine: online },
+      encodeURIComponent,
+      Object,
+      document: {
+        getElementById(id) { return id === "status" ? status : id === "retry" ? retry : null; },
+        addEventListener(name, handler) { if (name === "DOMContentLoaded") readyHandler = handler; }
+      },
+      addEventListener() {},
+      clearTimeout() {},
+      setTimeout(handler) { handler(); return 1; },
+      location: { replace(url) { redirectedTo = url; } }
+    };
+    context.window = context;
+    vm.runInNewContext(bridge, context);
+    readyHandler();
+    return { redirectedTo, retry, status };
+  }
+
+  const online = executeBoot(true);
+  assert.match(online.redirectedTo, /^https:\/\/gate-iptv-player-production\.up\.railway\.app\/\?/);
+  assert.match(online.redirectedTo, /platform=webos/);
+  assert.match(online.redirectedTo, /shellVersion=0\.6\.3/);
+  assert.match(online.redirectedTo, /boot=hosted/);
+
+  const offline = executeBoot(false);
+  assert.equal(offline.redirectedTo, "");
+  assert.match(offline.status.textContent, /sem internet/i);
+  assert.equal(offline.retry.disabled, false);
+  assert.equal(offline.retry.focused, true);
 });
