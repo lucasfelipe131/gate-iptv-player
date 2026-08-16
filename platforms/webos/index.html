@@ -3,34 +3,87 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta http-equiv="refresh" content="4;url=https://gate-iptv-player-production.up.railway.app/?platform=webos&amp;shellVersion=0.6.5&amp;safe=1&amp;revision=0.6.5&amp;appVersion=0.6.5&amp;boot=hosted">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-src https://gate-iptv-player-production.up.railway.app; child-src https://gate-iptv-player-production.up.railway.app; connect-src https://gate-iptv-player-production.up.railway.app; object-src 'none'; base-uri 'none'; form-action 'none'">
   <title>GATE TV</title>
   <style>
     * { box-sizing: border-box; }
     html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #050a13; }
     body { color: #f7f9fc; font-family: Arial, Helvetica, sans-serif; }
-    .connection-state { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; padding: 54px 72px; background: radial-gradient(circle at 50% 20%, #132847 0, #081221 38%, #050a13 100%); text-align: center; }
+    #gate-app {
+      position: fixed;
+      z-index: 1;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      border: 0;
+      background: #050a13;
+    }
+    #boot-screen {
+      position: fixed;
+      z-index: 20;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 54px 72px;
+      background: radial-gradient(circle at 50% 20%, #132847 0, #081221 38%, #050a13 100%);
+      text-align: center;
+      animation: reveal-app .01s linear 8s forwards;
+    }
+    #boot-screen.ready { display: none; }
+    #boot-screen.failed { animation: none; opacity: 1; visibility: visible; pointer-events: auto; }
     main { width: 100%; max-width: 920px; }
-    .mark { display: inline-grid; width: 132px; height: 132px; place-items: center; margin-bottom: 30px; border: 2px solid rgba(207,255,55,.42); border-radius: 34px; background: linear-gradient(145deg,#1778ff,#0b3d91); box-shadow: 0 24px 70px rgba(0,94,255,.3); font-size: 56px; font-weight: 800; }
-    h1 { margin: 0; font-size: 64px; letter-spacing: 5px; }
-    p { margin: 22px 0 38px; color: #aebbd0; font-size: 27px; line-height: 1.45; }
-    button { min-width: 330px; padding: 22px 40px; border: 3px solid transparent; border-radius: 16px; background: #b7ff24; color: #07101f; font-size: 27px; font-weight: 800; }
-    button:focus { outline: 0; border-color: #fff; transform: scale(1.04); }
-    button:disabled { opacity: .74; }
-    small { display: block; margin-top: 34px; color: #71809a; font-size: 19px; }
+    .app-icon { width: 132px; height: 132px; margin-bottom: 30px; border-radius: 30px; box-shadow: 0 24px 70px rgba(0, 94, 255, .28); }
+    h1 { margin: 0; font-size: 62px; letter-spacing: 5px; }
+    p { margin: 22px 0 26px; color: #aebbd0; font-size: 26px; line-height: 1.45; }
+    .spinner {
+      width: 54px;
+      height: 54px;
+      margin: 0 auto;
+      border: 6px solid rgba(255, 255, 255, .14);
+      border-top-color: #cfff37;
+      border-radius: 50%;
+      animation: spin .8s linear infinite;
+    }
+    button {
+      min-width: 330px;
+      margin-top: 8px;
+      padding: 22px 40px;
+      border: 3px solid transparent;
+      border-radius: 14px;
+      background: #cfff37;
+      color: #07101f;
+      font-size: 27px;
+      font-weight: 800;
+    }
+    button:focus { outline: 0; border-color: #fff; }
+    .hidden { display: none !important; }
+    small { display: block; margin-top: 28px; color: #71809a; font-size: 18px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes reveal-app { to { opacity: 0; visibility: hidden; pointer-events: none; } }
   </style>
 </head>
 <body>
-  <div class="connection-state" id="connection-state">
-    <main aria-live="polite">
-      <div class="mark" aria-hidden="true">G</div>
+  <iframe
+    id="gate-app"
+    title="GATE IPTV PLAYER"
+    src="https://gate-iptv-player-production.up.railway.app/?platform=webos&amp;shellVersion=0.6.6&amp;safe=1&amp;revision=0.6.6&amp;appVersion=0.6.6&amp;boot=iframe&amp;embedded=1&amp;bridgeToken=gate-webos-0.6.6"
+    allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
+    allowfullscreen
+    webkitallowfullscreen
+    tabindex="-1"></iframe>
+
+  <section id="boot-screen" aria-live="polite">
+    <main>
+      <img class="app-icon" src="assets/large-icon.png" alt="">
       <h1>GATE TV</h1>
-      <p id="status">Preparando a experiência para sua TV LG…</p>
-      <button id="retry" type="button">Abrir novamente</button>
-      <small>Use somente listas e fontes que você esteja autorizado a acessar.</small>
+      <p id="status">Abrindo o aplicativo na sua TV LG…</p>
+      <div class="spinner" id="spinner" aria-hidden="true"></div>
+      <button class="hidden" id="retry" type="button">Recarregar aplicativo</button>
+      <small>O GATE não fornece conteúdo. Use somente fontes autorizadas.</small>
     </main>
-  </div>
+  </section>
+
   <script src="bridge.js"></script>
 </body>
 </html>
