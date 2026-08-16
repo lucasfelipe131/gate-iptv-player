@@ -1,0 +1,1 @@
+Primeira versão do GATE TV preparada para Android TV e Google TV. Player independente para fontes M3U e Xtream autorizadas, com navegação por controle remoto, pareamento por QR Code, favoritos e reprodução otimizada para televisores. Inclui publicidade de abertura com falha segura, ativada somente quando houver uma tag VAST aprovada.
