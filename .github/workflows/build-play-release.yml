@@ -78,8 +78,8 @@ jobs:
           set -euo pipefail
           aab=platforms/android-native/app/build/outputs/bundle/release/app-release.aab
           test -s "$aab"
-          jarsigner -verify -strict -verbose -certs "$aab" >/tmp/jarsigner.txt
-          grep -q 'jar verified' /tmp/jarsigner.txt
+          jarsigner -verify -strict -verbose -certs "$aab" > "$RUNNER_TEMP/jarsigner.txt"
+          grep -q 'jar verified' "$RUNNER_TEMP/jarsigner.txt"
 
           unpacked="$RUNNER_TEMP/gate-aab"
           rm -rf "$unpacked"
@@ -87,8 +87,12 @@ jobs:
           unzip -q "$aab" -d "$unpacked"
           test -d "$unpacked/base/lib/arm64-v8a"
           test -d "$unpacked/base/lib/armeabi-v7a"
-          ! find "$unpacked/base/lib" -mindepth 1 -maxdepth 1 -type d \
-            | grep -qE '/(x86|x86_64)$'
+          find "$unpacked/base/lib" -mindepth 1 -maxdepth 1 -type d \
+            > "$RUNNER_TEMP/gate-aab-abi-directories.txt"
+          if grep -qE '/(x86|x86_64)$' "$RUNNER_TEMP/gate-aab-abi-directories.txt"; then
+            echo "::error title=Arquitetura inesperada::O AAB contém bibliotecas x86/x86_64."
+            exit 1
+          fi
 
           while IFS= read -r -d '' library; do
             while read -r alignment; do
