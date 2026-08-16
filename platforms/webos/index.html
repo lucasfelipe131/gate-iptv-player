@@ -3,95 +3,34 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-src https://gate-iptv-player-production.up.railway.app; child-src https://gate-iptv-player-production.up.railway.app; connect-src https://gate-iptv-player-production.up.railway.app; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="refresh" content="0;url=https://gate-iptv-player-production.up.railway.app/index-webos-android.html?platform=androidtv&amp;runtime=webos&amp;layout=androidtv&amp;nativePlayer=html5&amp;shellVersion=0.7.0&amp;revision=0.7.0&amp;appVersion=0.7.0&amp;boot=direct&amp;embedded=0&amp;reload=070">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src https://gate-iptv-player-production.up.railway.app; object-src 'none'; base-uri 'none'; form-action 'none'">
   <title>GATE TV</title>
   <style>
     * { box-sizing: border-box; }
     html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #050a13; }
-    body { color: #f7f9fc; font-family: Arial, Helvetica, sans-serif; }
-    #gate-app {
-      position: fixed;
-      z-index: 1;
-      top: 0;
-      right: 0;
-      bottom: 0;
-      left: 0;
-      inset: 0;
-      width: 100%;
-      height: 100%;
-      border: 0;
-      background: #050a13;
-    }
-    #boot-screen {
-      position: fixed;
-      z-index: 20;
-      top: 0;
-      right: 0;
-      bottom: 0;
-      left: 0;
-      inset: 0;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 54px 72px;
-      background: radial-gradient(circle at 50% 20%, #132847 0, #081221 38%, #050a13 100%);
-      text-align: center;
-      animation: release-boot .01s linear 3s forwards;
-    }
-    #boot-screen.ready { display: none !important; }
-    #boot-screen.failed { animation: none; opacity: 1; visibility: visible; pointer-events: auto; }
+    body { display: flex; align-items: center; justify-content: center; padding: 54px 72px; color: #f7f9fc; font-family: Arial, Helvetica, sans-serif; text-align: center; background: radial-gradient(circle at 50% 20%, #132847 0, #081221 38%, #050a13 100%); }
     main { width: 100%; max-width: 920px; }
     .app-icon { width: 132px; height: 132px; margin-bottom: 30px; border-radius: 30px; box-shadow: 0 24px 70px rgba(0, 94, 255, .28); }
     h1 { margin: 0; font-size: 62px; letter-spacing: 5px; }
     p { margin: 22px 0 26px; color: #aebbd0; font-size: 26px; line-height: 1.45; }
-    .spinner {
-      width: 54px;
-      height: 54px;
-      margin: 0 auto;
-      border: 6px solid rgba(255, 255, 255, .14);
-      border-top-color: #cfff37;
-      border-radius: 50%;
-      animation: spin .8s linear infinite;
-    }
-    button {
-      min-width: 330px;
-      margin-top: 8px;
-      padding: 22px 40px;
-      border: 3px solid transparent;
-      border-radius: 14px;
-      background: #cfff37;
-      color: #07101f;
-      font-size: 27px;
-      font-weight: 800;
-    }
+    .spinner { width: 54px; height: 54px; margin: 0 auto; border: 6px solid rgba(255,255,255,.14); border-top-color: #cfff37; border-radius: 50%; animation: spin .8s linear infinite; }
+    button { min-width: 330px; margin-top: 22px; padding: 22px 40px; border: 3px solid transparent; border-radius: 14px; background: #cfff37; color: #07101f; font-size: 27px; font-weight: 800; }
     button:focus { outline: 0; border-color: #fff; }
     .hidden { display: none !important; }
     small { display: block; margin-top: 28px; color: #71809a; font-size: 18px; }
     @keyframes spin { to { transform: rotate(360deg); } }
-    @keyframes release-boot { to { opacity: 0; visibility: hidden; pointer-events: none; } }
   </style>
 </head>
 <body>
-  <iframe
-    id="gate-app"
-    title="GATE IPTV PLAYER"
-    src="https://gate-iptv-player-production.up.railway.app/index-webos-android.html?platform=androidtv&amp;runtime=webos&amp;layout=androidtv&amp;nativePlayer=html5&amp;shellVersion=0.6.8&amp;revision=0.6.8&amp;appVersion=0.6.8&amp;boot=iframe&amp;embedded=1&amp;bridgeToken=gate-webos-0.6.8"
-    allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
-    allowfullscreen
-    webkitallowfullscreen
-    tabindex="0"></iframe>
-
-  <section id="boot-screen" aria-live="polite">
-    <main>
-      <img class="app-icon" src="assets/large-icon.png" alt="">
-      <h1>GATE TV</h1>
-      <p id="status">Abrindo a interface otimizada para sua TV LG…</p>
-      <div class="spinner" id="spinner" aria-hidden="true"></div>
-      <button class="hidden" id="retry" type="button">Recarregar aplicativo</button>
-      <small>O GATE não fornece conteúdo. Use somente fontes autorizadas.</small>
-    </main>
-  </section>
-
+  <main>
+    <img class="app-icon" src="assets/large-icon.png" alt="">
+    <h1>GATE TV</h1>
+    <p id="status">Abrindo o aplicativo diretamente na sua TV LG…</p>
+    <div class="spinner" id="spinner" aria-hidden="true"></div>
+    <button class="hidden" id="retry" type="button">Abrir GATE TV</button>
+    <small>O GATE não fornece conteúdo. Use somente fontes autorizadas.</small>
+  </main>
   <script src="bridge.js"></script>
 </body>
 </html>
