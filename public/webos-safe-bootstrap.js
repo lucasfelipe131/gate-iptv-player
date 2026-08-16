@@ -1,11 +1,17 @@
 (function () {
   "use strict";
+
   var ua = navigator.userAgent || "";
   var params;
   try { params = new URLSearchParams(window.location.search || ""); }
   catch (_error) { params = { get: function () { return ""; } }; }
+
   var isWebOS = String(params.get("platform") || "").toLowerCase() === "webos" || /Web0S|WebOS|NetCast/i.test(ua);
   if (!isWebOS) return;
+
+  var BRIDGE_VERSION = "1.2.0";
+  var bridgeToken = String(params.get("bridgeToken") || "");
+  var readyNotified = false;
 
   document.body.classList.add("webos-tv", "webos-safe-mode", "tv-optimized");
   document.body.classList.remove("gate-tv-v2", "gate-browser-polish", "browser-mode");
@@ -26,6 +32,85 @@
         userAgent: String(ua).slice(0, 260)
       }));
     } catch (_error) {}
+  }
+
+  function notifyParent(type, message) {
+    if (!bridgeToken || window.parent === window) return;
+    try {
+      window.parent.postMessage({
+        type: type,
+        token: bridgeToken,
+        version: BRIDGE_VERSION,
+        message: String(message || "")
+      }, "*");
+    } catch (_error) {}
+  }
+
+  function eventKey(code, fallback) {
+    var names = {
+      13: "Enter",
+      19: "MediaPause",
+      27: "Escape",
+      37: "ArrowLeft",
+      38: "ArrowUp",
+      39: "ArrowRight",
+      40: "ArrowDown",
+      413: "MediaStop",
+      415: "MediaPlay",
+      417: "MediaFastForward",
+      461: "BrowserBack",
+      10009: "BrowserBack",
+      10252: "MediaPlayPause"
+    };
+    return names[code] || String(fallback || "");
+  }
+
+  function defineEventValue(event, property, value) {
+    try {
+      Object.defineProperty(event, property, {
+        configurable: true,
+        enumerable: true,
+        get: function () { return value; }
+      });
+    } catch (_error) {
+      try { event[property] = value; } catch (_ignored) {}
+    }
+  }
+
+  function dispatchRemoteKey(data) {
+    var keyCode = Number(data.keyCode || data.which || 0);
+    if (!keyCode) return;
+    var key = eventKey(keyCode, data.key);
+    var target = document.activeElement && document.activeElement !== document.documentElement
+      ? document.activeElement
+      : document.body;
+    var event;
+
+    try {
+      event = new KeyboardEvent("keydown", {
+        key: key,
+        code: String(data.code || key),
+        bubbles: true,
+        cancelable: true
+      });
+    } catch (_error) {
+      event = document.createEvent("Event");
+      event.initEvent("keydown", true, true);
+    }
+
+    defineEventValue(event, "key", key);
+    defineEventValue(event, "code", String(data.code || key));
+    defineEventValue(event, "keyCode", keyCode);
+    defineEventValue(event, "which", keyCode);
+    target.dispatchEvent(event);
+  }
+
+  if (bridgeToken && window.parent !== window) {
+    window.addEventListener("message", function (event) {
+      var data = event.data || {};
+      if (event.source !== window.parent || data.type !== "gate-webos-remote" || data.token !== bridgeToken) return;
+      dispatchRemoteKey(data);
+    }, false);
   }
 
   if (navigator.serviceWorker) {
@@ -55,15 +140,46 @@
     diagnostics("promise-rejection", event.reason && (event.reason.message || event.reason), "");
   });
 
-  window.setTimeout(function () {
+  function interfaceRendered() {
     var main = document.getElementById("main-content");
-    var rendered = Boolean(main && main.children && main.children.length);
-    diagnostics(rendered ? "ui-ready" : "ui-empty", rendered ? "Interface renderizada" : "A interface não renderizou em 6 segundos", "safe-1.1.0");
-    if (!rendered && main) {
-      main.innerHTML = '<section style="padding:70px;text-align:center"><h1 style="font-size:46px">Recuperando o GATE TV</h1><p style="font-size:22px;color:#aebbd0">Pressione Voltar e abra o aplicativo novamente.</p></section>';
-    }
-  }, 6000);
+    return Boolean(main && main.children && main.children.length);
+  }
 
-  window.GateWebOSSafe = { version: "1.1.0", diagnostics: diagnostics };
-  diagnostics("bootstrap", "Modo seguro LG iniciado", "safe-1.1.0");
+  function signalReady() {
+    if (!interfaceRendered()) return false;
+    if (!readyNotified) {
+      readyNotified = true;
+      diagnostics("ui-ready", "Interface webOS renderizada", "safe-" + BRIDGE_VERSION);
+    }
+    notifyParent("gate-webos-ready", "Interface pronta");
+    return true;
+  }
+
+  function waitForInterface(attempt) {
+    if (signalReady()) return;
+    if (attempt < 48) {
+      window.setTimeout(function () { waitForInterface(attempt + 1); }, 250);
+      return;
+    }
+
+    var main = document.getElementById("main-content");
+    diagnostics("ui-empty", "A interface não renderizou em 12 segundos", "safe-" + BRIDGE_VERSION);
+    notifyParent("gate-webos-error", "A interface não respondeu. Recarregue o aplicativo.");
+    if (main) {
+      main.innerHTML = '<section style="padding:70px;text-align:center"><h1 style="font-size:46px">Recuperando o GATE TV</h1><p style="font-size:22px;color:#aebbd0">Feche e abra o aplicativo novamente.</p></section>';
+    }
+  }
+
+  window.addEventListener("pageshow", function () { window.setTimeout(signalReady, 120); });
+  window.addEventListener("load", function () { window.setTimeout(signalReady, 180); });
+
+  window.GateWebOSSafe = {
+    version: BRIDGE_VERSION,
+    diagnostics: diagnostics,
+    signalReady: signalReady
+  };
+
+  diagnostics("bootstrap", "Modo seguro LG iniciado", "safe-" + BRIDGE_VERSION);
+  notifyParent("gate-webos-booting", "Inicialização webOS em andamento");
+  window.setTimeout(function () { waitForInterface(0); }, 100);
 }());
