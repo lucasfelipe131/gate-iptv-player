@@ -5,7 +5,7 @@
     <uses-feature android:name="android.software.leanback" android:required="false" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
     <application android:allowBackup="false" android:banner="@drawable/tv_banner" android:hardwareAccelerated="true" android:icon="@drawable/gate_icon" android:label="GATE TV" android:largeHeap="true" android:logo="@drawable/gate_icon" android:roundIcon="@drawable/gate_icon" android:usesCleartextTraffic="true" android:theme="@style/GateTheme">
-        <activity android:name=".MainActivity" android:configChanges="orientation|screenSize|keyboardHidden" android:exported="true" android:screenOrientation="unspecified">
+        <activity android:name=".StartupAdActivity" android:configChanges="orientation|screenSize|keyboardHidden" android:exported="true" android:screenOrientation="unspecified">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -15,6 +15,7 @@
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
         </activity>
+        <activity android:name=".MainActivity" android:configChanges="orientation|screenSize|keyboardHidden" android:exported="false" android:screenOrientation="unspecified" />
         <receiver android:name=".BootReceiver" android:enabled="true" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />

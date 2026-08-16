@@ -14,7 +14,7 @@ android {
 
     // Real Android/Google TV devices use ARM. Keeping x86/x86_64 native VLC
     // binaries in the TCL package more than doubles the APK and can make older
-    // TV package installers reject or truncate it. Generate a compact ARM
+    // TV package installers reject or truncate it. Generate compact ARM
     // architecture-specific APKs. Combining both VLC ARM engines is still too
     // large for reliable delivery through some TV browsers/file managers.
     splits {
@@ -27,6 +27,9 @@ android {
     }
 
     compileOptions {
+        // IMA 3.39+ uses Java APIs that require core library desugaring on
+        // older Android TV versions supported by this project.
+        coreLibraryDesugaringEnabled true
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
@@ -39,6 +42,8 @@ android {
 }
 
 dependencies {
+    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.5'
+    implementation 'com.google.ads.interactivemedia.v3:interactivemedia:3.39.0'
     implementation 'org.videolan.android:libvlc-all:3.7.5'
     implementation 'androidx.media3:media3-exoplayer:1.11.0'
     implementation 'androidx.media3:media3-exoplayer-hls:1.11.0'
