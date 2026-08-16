@@ -1,9 +1,10 @@
 # GATE TV para LG webOS
 
-Cliente separado para TVs LG. A versão 0.6.5 segue o modelo oficial de aplicativo
-hospedado do webOS: o shell local redireciona a janela principal para a aplicação
-de produção. O JavaScript faz a abertura imediata e um `meta refresh` independente
-funciona como fallback caso o motor da TV não execute o script inicial.
+Cliente separado para TVs LG. A versão **0.6.6** remove o redirecionamento de
+janela que podia ficar preso na tela inicial do IPK. O shell local agora mantém a
+aplicação de produção dentro de um `iframe` de tela cheia, autorizado pela política
+de segurança do servidor. Assim, a interface abre mesmo quando o webOS bloqueia
+`location.replace()` para uma origem externa.
 
 ## Compatibilidade atual
 
@@ -29,17 +30,23 @@ sh scripts/package-webos.sh
 O arquivo é criado em `dist/webos/`. Para testar no aparelho:
 
 ```bash
-ares-install -d myTV dist/webos/com.gateone.app.gateiptvplayer_0.6.5_all.ipk
+ares-install -d myTV dist/webos/com.gateone.app.gateiptvplayer_0.6.6_all.ipk
 ares-launch -d myTV com.gateone.app.gateiptvplayer
 ```
 
 ## Inicialização e recuperação
 
-- `bridge.js` abre a origem oficial com `location.replace`, como app hospedado.
-- `index.html` contém um segundo redirecionamento declarativo após quatro
-  segundos; assim o IPK não permanece preso na abertura se o script local falhar.
-- Sem internet, o shell mantém uma mensagem clara e deixa o botão de nova
-  tentativa focado para o controle remoto.
+- `index.html` já contém o endereço hospedado no `iframe`; portanto, a abertura
+  não depende do JavaScript local para sair da tela inicial.
+- `bridge.js` aguarda o sinal real de interface pronta, move o foco para o
+  conteúdo hospedado e encaminha as teclas do controle caso o foco permaneça no
+  shell do IPK.
+- Uma animação CSS remove a tela de carregamento depois de oito segundos como
+  fallback adicional, mesmo se o script local não iniciar.
+- Se a rede falhar, o shell mostra um botão funcional para recarregar somente o
+  conteúdo hospedado, sem reinstalar o aplicativo.
+- O modo seguro hospedado remove Service Workers antigos e devolve ao shell os
+  sinais `gate-webos-booting`, `gate-webos-ready` e `gate-webos-error`.
 - A reprodução continua protegida pelo watchdog da aplicação hospedada, que
   acompanha relógio, buffer e quadros apresentados e recria o decoder quando
   detecta vídeo preto.
