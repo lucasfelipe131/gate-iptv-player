@@ -1,4 +1,4 @@
-# GATE TV 0.6.2
+# GATE TV 0.6.4
 
 Player multiplataforma para listas e fontes de mídia autorizadas. O GATE TV não
 fornece, hospeda ou vende canais, filmes, séries ou credenciais.
@@ -73,7 +73,7 @@ As variáveis reservadas para a próxima etapa são:
 - `PAYMENT_RETURN_URL`: origem HTTPS das páginas de retorno;
 - `PUBLIC_APP_URL`: origem pública usada no QR e em links absolutos.
 
-Mesmo com essas variáveis, a versão 0.6.2 não cria cobrança enquanto a etapa de
+Mesmo com essas variáveis, a versão 0.6.4 não cria cobrança enquanto a etapa de
 entitlement estiver pendente. Uma versão destinada à Google Play deve usar um
 flavor com Google Play Billing conforme a política da loja.
 

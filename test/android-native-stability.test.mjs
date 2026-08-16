@@ -22,13 +22,13 @@ const bootReceiver = fs.readFileSync(
   "utf8"
 );
 
-test("publica o motor Android TV como versão 0.6.2 coerente", () => {
-  assert.match(appGradle, /versionCode 62/);
-  assert.match(appGradle, /versionName '0\.6\.2'/);
+test("publica o motor Android TV como versão 0.6.4 coerente", () => {
+  assert.match(appGradle, /versionCode 64/);
+  assert.match(appGradle, /versionName '0\.6\.4'/);
   assert.match(appGradle, /splits\s*\{[\s\S]*abi\s*\{/);
   assert.match(appGradle, /include 'armeabi-v7a', 'arm64-v8a'/);
   assert.match(appGradle, /universalApk false/);
-  assert.match(source, /APP_VERSION = "0\.6\.2"/);
+  assert.match(source, /APP_VERSION = "0\.6\.4"/);
   assert.match(source, /GATE-TV-NATIVE\/" \+ APP_VERSION/);
   assert.match(source, /GATE-IPTV-PLAYER\/" \+ APP_VERSION/);
   assert.doesNotMatch(source, /\.isBlank\(\)/, "isBlank não existe em vários Android TV antigos");

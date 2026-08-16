@@ -7,11 +7,11 @@
   <meta name="description" content="GATE IPTV PLAYER — conecte suas próprias fontes autorizadas em Smart TVs." />
   <link rel="icon" href="/gate-icon.svg" />
   <link rel="manifest" href="/manifest.webmanifest" />
-  <link rel="stylesheet" href="/styles.css?v=0.6.2" />
-  <link rel="stylesheet" href="/webos.css?v=0.6.2" />
-  <link rel="stylesheet" href="/pro-ui.css?v=0.6.2" />
-  <link rel="stylesheet" href="/web-ui.css?v=0.6.2" />
-  <link id="gate-ui-polish-2" rel="stylesheet" href="/ui-polish.css?v=0.6.2" />
+  <link rel="stylesheet" href="/styles.css?v=0.6.4" />
+  <link rel="stylesheet" href="/webos.css?v=0.6.4" />
+  <link rel="stylesheet" href="/pro-ui.css?v=0.6.4" />
+  <link rel="stylesheet" href="/web-ui.css?v=0.6.4" />
+  <link id="gate-ui-polish-2" rel="stylesheet" href="/ui-polish.css?v=0.6.4" />
   <title>GATE IPTV PLAYER</title>
 </head>
 <body>
@@ -29,9 +29,7 @@
         <button class="nav-item focusable" data-action="open-favorites" data-focusable><span class="nav-icon">★</span><span>Favoritos</span></button>
       </nav>
       <div class="sidebar-bottom">
-        <button class="nav-item focusable" data-action="open-pairing" data-focusable><span class="nav-icon">▦</span><span>Conectar por QR</span></button>
-        <button class="nav-item focusable" data-action="open-source" data-focusable><span class="nav-icon">＋</span><span>Trocar lista</span></button>
-        <button class="nav-item focusable android-tv-only" data-action="open-tv-settings" data-focusable><span class="nav-icon">⚙</span><span>Configurações da TV</span></button>
+        <button class="nav-item focusable" data-action="open-tv-settings" data-focusable><span class="nav-icon">⚙</span><span>Configurações</span></button>
         <a class="nav-item focusable" href="/assinar" data-link data-focusable><span class="nav-icon">◆</span><span>GATE Premium</span></a>
       </div>
     </aside>
@@ -85,15 +83,59 @@
   <section class="modal hidden" id="tv-settings-modal" role="dialog" aria-modal="true" aria-labelledby="tv-settings-title">
     <div class="modal-card tv-settings-card">
       <button class="icon-button focusable close-tv-settings" data-focusable aria-label="Fechar">×</button>
-      <p class="eyebrow">CONFIGURAÇÕES DA TV</p>
-      <h2 id="tv-settings-title">Abrir a GATE TV mais rápido</h2>
-      <p class="muted">Ative a inicialização automática para abrir o aplicativo quando a TV Android for ligada. Alguns modelos também exigem liberar a inicialização automática nas configurações do sistema.</p>
-      <button class="tv-setting-toggle focusable" id="autostart-toggle" data-action="toggle-autostart" data-focusable aria-pressed="false">
-        <span class="tv-setting-copy"><strong>Abrir ao ligar a TV</strong><small id="autostart-description">Desativado</small></span>
-        <span class="tv-switch" aria-hidden="true"><i></i></span>
-      </button>
-      <div class="tv-settings-note"><strong>Como usar</strong><span>Ative uma vez e deixe a GATE TV instalada. A opção pode depender das permissões do fabricante da TV.</span></div>
-      <button class="primary-button focusable close-tv-settings-primary" data-focusable>Concluir</button>
+      <p class="eyebrow">CENTRAL DA TV</p>
+      <h2 id="tv-settings-title">Configurações</h2>
+      <p class="muted">Ajuste reprodução e tela em um só lugar. O modo automático é o mais indicado para evitar travamentos.</p>
+      <div class="tv-settings-sections">
+        <section class="tv-settings-section">
+          <div class="tv-setting-heading"><span>01</span><div><strong>Motor do player</strong><small id="player-engine-description">Alternância automática quando um formato falhar.</small></div></div>
+          <div class="tv-choice-row" id="player-engine-options">
+            <button class="tv-choice focusable" data-action="set-player-engine" data-setting-value="auto" data-focusable>Automático</button>
+            <button class="tv-choice focusable" data-action="set-player-engine" data-setting-value="media3" data-focusable><span id="engine-primary-label">Media3</span></button>
+            <button class="tv-choice focusable" data-action="set-player-engine" data-setting-value="vlc" data-focusable><span id="engine-alternate-label">LibVLC</span></button>
+          </div>
+        </section>
+        <section class="tv-settings-section">
+          <div class="tv-setting-heading"><span>02</span><div><strong>Qualidade dos canais</strong><small id="quality-mode-description">Equilibra nitidez e estabilidade automaticamente.</small></div></div>
+          <div class="tv-choice-row" id="quality-mode-options">
+            <button class="tv-choice focusable" data-action="set-quality-mode" data-setting-value="auto" data-focusable>Adaptativa</button>
+            <button class="tv-choice focusable" data-action="set-quality-mode" data-setting-value="stable" data-focusable>Estável · 1080p</button>
+            <button class="tv-choice focusable" data-action="set-quality-mode" data-setting-value="max" data-focusable>Máxima · até 4K</button>
+          </div>
+        </section>
+        <section class="tv-settings-section tv-settings-split">
+          <div>
+            <div class="tv-setting-heading compact"><span>03</span><div><strong>Formato da imagem</strong><small>Ajuste, preencha ou estique.</small></div></div>
+            <div class="tv-choice-row" id="video-fit-options">
+              <button class="tv-choice focusable" data-action="set-video-fit" data-setting-value="fit" data-focusable>Ajustar</button>
+              <button class="tv-choice focusable" data-action="set-video-fit" data-setting-value="zoom" data-focusable>Preencher</button>
+              <button class="tv-choice focusable" data-action="set-video-fit" data-setting-value="stretch" data-focusable>Esticar</button>
+            </div>
+          </div>
+          <div>
+            <div class="tv-setting-heading compact"><span>04</span><div><strong>Tamanho da tela</strong><small>Compensa bordas cortadas pela TV.</small></div></div>
+            <div class="tv-choice-row" id="screen-size-options">
+              <button class="tv-choice focusable" data-action="set-screen-size" data-setting-value="100" data-focusable>100%</button>
+              <button class="tv-choice focusable" data-action="set-screen-size" data-setting-value="95" data-focusable>95%</button>
+              <button class="tv-choice focusable" data-action="set-screen-size" data-setting-value="90" data-focusable>90%</button>
+            </div>
+          </div>
+        </section>
+        <section class="tv-settings-section android-tv-only tv-autostart-section">
+          <button class="tv-setting-toggle focusable" id="autostart-toggle" data-action="toggle-autostart" data-focusable aria-pressed="false">
+            <span class="tv-setting-copy"><strong>Abrir ao ligar a TV</strong><small id="autostart-description">Desativado</small></span>
+            <span class="tv-switch" aria-hidden="true"><i></i></span>
+          </button>
+        </section>
+        <section class="tv-settings-section tv-connection-settings">
+          <div class="tv-setting-heading compact"><span>05</span><div><strong>Lista e conexão</strong><small>O QR Code fica somente na tela inicial e aqui.</small></div></div>
+          <div class="tv-choice-row">
+            <button class="tv-choice focusable" data-action="settings-open-pairing" data-focusable>Conectar por QR</button>
+            <button class="tv-choice focusable" data-action="settings-open-source" data-focusable>Adicionar ou trocar lista</button>
+          </div>
+        </section>
+      </div>
+      <div class="tv-settings-footer"><span id="settings-platform-note">As alterações são salvas nesta TV.</span><button class="primary-button focusable close-tv-settings-primary" data-focusable>Concluir</button></div>
     </div>
   </section>
 
@@ -176,12 +218,12 @@
   </section>
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
-  <script src="/vendor/hls.min.js?v=0.6.2"></script>
-  <script src="/vendor/mpegts.min.js?v=0.6.2"></script>
-  <script src="/tizen-loader.js?v=0.6.2"></script>
-  <script src="/platform-player.js?v=0.6.2"></script>
-  <script src="/app.js?v=0.6.2"></script>
-  <script src="/webos-remote.js?v=0.6.2"></script>
-  <script src="/pro-ui.js?v=0.6.2"></script>
+  <script src="/vendor/hls.min.js?v=0.6.4"></script>
+  <script src="/vendor/mpegts.min.js?v=0.6.4"></script>
+  <script src="/tizen-loader.js?v=0.6.4"></script>
+  <script src="/platform-player.js?v=0.6.4"></script>
+  <script src="/app.js?v=0.6.4"></script>
+  <script src="/webos-remote.js?v=0.6.4"></script>
+  <script src="/pro-ui.js?v=0.6.4"></script>
 </body>
 </html>

@@ -22,7 +22,7 @@
   }
 
   function activeScope() {
-    var ids = ["ad-overlay", "player-modal", "details-modal", "pairing-modal", "source-modal"];
+    var ids = ["ad-overlay", "player-modal", "details-modal", "tv-settings-modal", "pairing-modal", "source-modal"];
     for (var index = 0; index < ids.length; index += 1) {
       var node = document.getElementById(ids[index]);
       if (node && !node.classList.contains("hidden")) return node;

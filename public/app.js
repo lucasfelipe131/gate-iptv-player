@@ -1,7 +1,11 @@
-const APP_VERSION = "0.6.2";
+const APP_VERSION = "0.6.4";
 const CACHE_DB = "gate-player-cache-v1";
 const CACHE_STORE = "device";
 const FAVORITES_KEY = "gate.favorites.v1";
+const PLAYER_ENGINE_KEY = "gate.player.engine.v1";
+const QUALITY_MODE_KEY = "gate.player.quality.v1";
+const VIDEO_FIT_KEY = "gate.player.fit.v1";
+const SCREEN_SIZE_KEY = "gate.player.screen-size.v1";
 const IMA_SDK_URL = "https://imasdk.googleapis.com/js/sdkloader/ima3.js";
 const TV_STREAM_BUFFER = Object.freeze({
   back: 18,
@@ -23,6 +27,17 @@ const catalogSearchCache = new WeakMap();
 function readJsonStorage(key, fallback) {
   try { return JSON.parse(localStorage.getItem(key) || "") ?? fallback; }
   catch { return fallback; }
+}
+
+function readChoiceStorage(key, allowed, fallback) {
+  try {
+    const value = String(localStorage.getItem(key) || "").toLowerCase();
+    return allowed.includes(value) ? value : fallback;
+  } catch { return fallback; }
+}
+
+function writeChoiceStorage(key, value) {
+  try { localStorage.setItem(key, String(value)); } catch {}
 }
 
 const state = {
@@ -201,12 +216,16 @@ function allowActivation(key, minimumGap = 420) {
 function topbar() {
   const connected = state.source ? '<span class="pill connected-pill">● Lista conectada</span>' : '<span class="pill">Nenhuma lista conectada</span>';
   const expiry = state.source ? `<span class="pill expiry-pill">Validade: ${escapeHtml(formatExpiryDate(state.account?.expiresAt))}</span>` : "";
+  const homeView = state.view === "home";
+  const back = homeView ? "" : `<button class="round-action browse-back focusable" data-action="go-home" data-focusable aria-label="Voltar ao início">${gateIcon("back")}</button>`;
+  const pairing = homeView ? `<button class="round-action focusable" data-action="open-pairing" data-focusable aria-label="Conectar por QR">${gateIcon("qr")}</button>` : "";
   return `<header class="topbar">
     <div class="topbar-start">
+      ${back}
       <button class="top-brand focusable" data-action="go-home" data-focusable><img src="/gate-icon.svg" alt=""><span><strong>GATE</strong><small>IPTV PLAYER</small></span></button>
       <div class="web-top-context"><small>GATE PLAYER</small><strong>${state.view === "home" ? "Visão geral" : escapeHtml(titleFor(state.view))}</strong></div>
     </div>
-    <div class="top-actions">${connected}${expiry}<button class="round-action focusable" data-action="open-pairing" data-focusable aria-label="Conectar por QR">${gateIcon("qr")}</button>${state.source ? `<button class="round-action focusable" data-action="open-favorites" data-focusable aria-label="Favoritos">${gateIcon("favorite")}</button>` : ""}<button class="round-action focusable" data-action="open-source" data-focusable aria-label="Trocar lista">${gateIcon("settings")}</button></div>
+    <div class="top-actions">${connected}${expiry}${pairing}${state.source ? `<button class="round-action focusable" data-action="open-favorites" data-focusable aria-label="Favoritos">${gateIcon("favorite")}</button>` : ""}<button class="round-action focusable" data-action="open-tv-settings" data-focusable aria-label="Configurações">${gateIcon("settings")}</button></div>
   </header>`;
 }
 
@@ -1179,18 +1198,19 @@ function hlsErrorMessage(data) {
 function adaptiveHlsOptions(preview = false) {
   const constrainedTv = document.body.classList.contains("tv-optimized");
   const buffer = constrainedTv ? TV_STREAM_BUFFER : WEB_STREAM_BUFFER;
+  const quality = qualityModeSetting();
   return {
     startLevel: -1,
-    capLevelToPlayerSize: true,
+    capLevelToPlayerSize: quality !== "max",
     enableWorker: !/Web0S|WebOS|NetCast/i.test(navigator.userAgent || ""),
     lowLatencyMode: false,
     backBufferLength: preview ? Math.min(12, buffer.back) : buffer.back,
     maxBufferLength: preview ? Math.min(20, buffer.target) : buffer.target,
     maxMaxBufferLength: preview ? Math.min(40, buffer.maximum) : buffer.maximum,
     maxBufferSize: constrainedTv ? 48 * 1024 * 1024 : 80 * 1024 * 1024,
-    abrBandWidthFactor: .65,
-    abrBandWidthUpFactor: .45,
-    abrEwmaDefaultEstimate: 1_500_000,
+    abrBandWidthFactor: quality === "stable" ? .58 : .72,
+    abrBandWidthUpFactor: quality === "stable" ? .42 : .55,
+    abrEwmaDefaultEstimate: quality === "max" ? 8_000_000 : quality === "stable" ? 2_500_000 : 4_000_000,
     liveSyncDurationCount: preview ? 3 : 5,
     liveMaxLatencyDurationCount: preview ? 10 : 18,
     maxLiveSyncPlaybackRate: 1.04,
@@ -1198,6 +1218,22 @@ function adaptiveHlsOptions(preview = false) {
     levelLoadingTimeOut: 30_000,
     fragLoadingTimeOut: 35_000
   };
+}
+
+function applyHlsQualityPreference(hls) {
+  if (!hls) return;
+  const quality = qualityModeSetting();
+  if (quality === "max") {
+    hls.autoLevelCapping = -1;
+    return;
+  }
+  if (quality !== "stable") return;
+  let cap = -1;
+  for (let index = 0; index < (hls.levels || []).length; index += 1) {
+    const height = Number(hls.levels[index]?.height || 0);
+    if (height > 0 && height <= 1080) cap = index;
+  }
+  if (cap >= 0) hls.autoLevelCapping = cap;
 }
 
 function absoluteStreamUrl(value) {
@@ -1267,8 +1303,95 @@ function nativeAutoStartEnabled() {
   catch { return false; }
 }
 
+function bridgeChoice(getter, allowed, fallback) {
+  try {
+    if (window.GateNativePlayer && typeof window.GateNativePlayer[getter] === "function") {
+      const value = String(window.GateNativePlayer[getter]() || "").toLowerCase();
+      if (allowed.includes(value)) return value;
+    }
+  } catch {}
+  return fallback;
+}
+
+function playerEngineSetting() {
+  const fallback = readChoiceStorage(PLAYER_ENGINE_KEY, ["auto", "media3", "vlc"], "auto");
+  return bridgeChoice("getPreferredEngine", ["auto", "media3", "vlc"], fallback);
+}
+
+function qualityModeSetting() {
+  const fallback = readChoiceStorage(QUALITY_MODE_KEY, ["auto", "stable", "max"], "auto");
+  return bridgeChoice("getQualityMode", ["auto", "stable", "max"], fallback);
+}
+
+function videoFitSetting() {
+  const fallback = readChoiceStorage(VIDEO_FIT_KEY, ["fit", "zoom", "stretch"], "fit");
+  return bridgeChoice("getVideoFit", ["fit", "zoom", "stretch"], fallback);
+}
+
+function screenSizeSetting() {
+  const fallback = readChoiceStorage(SCREEN_SIZE_KEY, ["100", "95", "90"], "100");
+  return bridgeChoice("getScreenSize", ["100", "95", "90"], fallback);
+}
+
+function applyVisualPlayerSettings() {
+  document.documentElement.dataset.videoFit = videoFitSetting();
+  document.documentElement.dataset.screenSize = screenSizeSetting();
+}
+
+function setBridgeChoice(setter, value) {
+  try {
+    if (window.GateNativePlayer && typeof window.GateNativePlayer[setter] === "function") {
+      window.GateNativePlayer[setter](String(value));
+      return true;
+    }
+  } catch {}
+  return false;
+}
+
+function restartWebPlaybackForSetting() {
+  if (nativePlayerAvailable()) return;
+  if (!playerModal.classList.contains("hidden") && state.currentItem) {
+    startWebPlayback(video, state.currentItem, { preview: false });
+    return;
+  }
+  if (state.view === "live" && state.selectedLive) playLivePreview(state.selectedLive);
+}
+
+function markSettingChoices(containerId, value) {
+  tvSettingsModal?.querySelectorAll(`#${containerId} [data-setting-value]`).forEach((button) => {
+    const selected = button.dataset.settingValue === String(value);
+    button.classList.toggle("selected", selected);
+    button.setAttribute("aria-pressed", String(selected));
+  });
+}
+
 function renderTvSettings() {
   if (!tvSettingsModal) return;
+  const native = nativePlayerAvailable();
+  const primaryLabel = tvSettingsModal.querySelector("#engine-primary-label");
+  const alternateLabel = tvSettingsModal.querySelector("#engine-alternate-label");
+  if (primaryLabel) primaryLabel.textContent = native ? "Media3" : "Player da TV";
+  if (alternateLabel) alternateLabel.textContent = native ? "LibVLC" : "Compatível";
+  markSettingChoices("player-engine-options", playerEngineSetting());
+  markSettingChoices("quality-mode-options", qualityModeSetting());
+  markSettingChoices("video-fit-options", videoFitSetting());
+  markSettingChoices("screen-size-options", screenSizeSetting());
+  const engineDescription = tvSettingsModal.querySelector("#player-engine-description");
+  const engine = playerEngineSetting();
+  if (engineDescription) {
+    engineDescription.textContent = engine === "auto"
+      ? "Alternância automática quando um formato falhar."
+      : engine === "media3"
+      ? native ? "Media3 primeiro, com LibVLC de segurança." : "Usa primeiro o player nativo desta TV."
+      : native ? "LibVLC primeiro, com Media3 de segurança." : "Usa o motor compatível HLS.js / MPEG-TS.";
+  }
+  const qualityDescription = tvSettingsModal.querySelector("#quality-mode-description");
+  const quality = qualityModeSetting();
+  if (qualityDescription) qualityDescription.textContent = quality === "stable"
+    ? "Limita a 1080p para redes ou TVs que oscilam."
+    : quality === "max"
+    ? "Libera até 4K quando o canal e a conexão suportarem."
+    : "Equilibra nitidez e estabilidade automaticamente.";
   const toggle = tvSettingsModal.querySelector("#autostart-toggle");
   const description = tvSettingsModal.querySelector("#autostart-description");
   const enabled = nativeAutoStartEnabled();
@@ -1278,15 +1401,13 @@ function renderTvSettings() {
 }
 
 function openTvSettings() {
-  if (!tvSettingsModal || !nativeAutoStartAvailable()) {
-    showToast("Esta opção está disponível no aplicativo para Android TV.");
-    return;
-  }
+  if (!tvSettingsModal) return;
   state.lastFocused = document.activeElement;
+  applyVisualPlayerSettings();
   renderTvSettings();
   tvSettingsModal.classList.remove("hidden");
   refreshFocusable();
-  setTimeout(() => tvSettingsModal.querySelector("#autostart-toggle")?.focus(), 0);
+  setTimeout(() => tvSettingsModal.querySelector("[data-action='set-player-engine']")?.focus(), 0);
 }
 
 function closeTvSettings() {
@@ -1305,6 +1426,24 @@ function toggleNativeAutoStart() {
   } catch {
     showToast("A TV não permitiu alterar essa configuração.");
   }
+}
+
+function updatePlayerSetting(action, value) {
+  const definitions = {
+    "set-player-engine": { key: PLAYER_ENGINE_KEY, allowed: ["auto", "media3", "vlc"], setter: "setPreferredEngine", label: "Motor do player atualizado." },
+    "set-quality-mode": { key: QUALITY_MODE_KEY, allowed: ["auto", "stable", "max"], setter: "setQualityMode", label: "Qualidade de reprodução atualizada." },
+    "set-video-fit": { key: VIDEO_FIT_KEY, allowed: ["fit", "zoom", "stretch"], setter: "setVideoFit", label: "Formato da imagem atualizado." },
+    "set-screen-size": { key: SCREEN_SIZE_KEY, allowed: ["100", "95", "90"], setter: "setScreenSize", label: "Tamanho da tela atualizado." }
+  };
+  const definition = definitions[action];
+  const normalized = String(value || "").toLowerCase();
+  if (!definition || !definition.allowed.includes(normalized)) return;
+  writeChoiceStorage(definition.key, normalized);
+  const handledNatively = setBridgeChoice(definition.setter, normalized);
+  applyVisualPlayerSettings();
+  renderTvSettings();
+  if (!handledNatively && (action === "set-player-engine" || action === "set-quality-mode")) restartWebPlaybackForSetting();
+  showToast(definition.label);
 }
 
 window.GateNativeHooks = {
@@ -1439,6 +1578,17 @@ function isCurrentWebAttempt(session, attempt) {
   return Boolean(session && !session.destroyed && session.attempt === attempt);
 }
 
+function webEngineOrder(candidate) {
+  const preference = playerEngineSetting();
+  if (candidate?.type === "hls" && window.Hls?.isSupported()) {
+    return preference === "media3" ? ["native", "hlsjs"] : ["hlsjs", "native"];
+  }
+  if (candidate?.type === "mpegts" && window.mpegts?.isSupported?.()) {
+    return preference === "media3" ? ["native", "mpegtsjs"] : ["mpegtsjs", "native"];
+  }
+  return ["native"];
+}
+
 function sampleRenderedFrames(session, media, now = Date.now()) {
   let frames = Number.NaN;
   try { frames = Number(media.getVideoPlaybackQuality?.().totalVideoFrames); } catch {}
@@ -1549,7 +1699,12 @@ function advanceWebCandidate(session, message) {
   if (!session || session.destroyed || session.switching) return;
   session.switching = true;
   clearWebEngine(session);
-  session.index += 1;
+  const engines = webEngineOrder(session.candidates[session.index]);
+  if (session.engineIndex + 1 < engines.length) session.engineIndex += 1;
+  else {
+    session.engineIndex = 0;
+    session.index += 1;
+  }
   session.networkRetries = 0;
   session.mediaRetries = 0;
   session.stallRetries = 0;
@@ -1583,12 +1738,14 @@ function startWebCandidate(session, reason = "") {
   if (!candidate) {
     session.routeRounds += 1;
     session.index = 0;
+    session.engineIndex = 0;
     const delay = Math.min(15_000, 2_000 * session.routeRounds);
     playbackStatus(session, reason || "Mantendo o canal aberto e procurando uma rota estável…");
     scheduleWebTask(session, () => startWebCandidate(session, "Nova tentativa de conexão…"), delay, attempt);
     return;
   }
   const playbackUrl = freshPlaybackUrl(candidate.url, `${Date.now()}-${attempt}`);
+  const engine = webEngineOrder(candidate)[session.engineIndex] || "native";
   session.lastProgressAt = Date.now();
   session.lastDataAt = session.lastProgressAt;
   session.starvedAt = 0;
@@ -1602,14 +1759,17 @@ function startWebCandidate(session, reason = "") {
   session.started = false;
   session.lastPlayAttemptAt = 0;
   startVideoFrameMonitor(session);
-  playbackStatus(session, candidate.direct ? "Testando rota direta mais rápida…" : "Abrindo pela rota compatível…");
+  playbackStatus(session, engine === "native"
+    ? "Abrindo no player da TV…"
+    : candidate.direct ? "Testando rota direta mais rápida…" : "Abrindo pela rota compatível…");
 
-  if (candidate.type === "hls" && window.Hls?.isSupported()) {
+  if (engine === "hlsjs") {
     const hls = new window.Hls(adaptiveHlsOptions(session.preview));
     session.hls = hls;
     if (session.preview) state.previewHls = hls; else state.hls = hls;
     hls.on(window.Hls.Events.MANIFEST_PARSED, () => {
       if (!isCurrentWebAttempt(session, attempt)) return;
+      applyHlsQualityPreference(hls);
       requestWebMediaPlay(session);
     });
     hls.on(window.Hls.Events.LEVEL_SWITCHED, (_event, data) => {
@@ -1651,7 +1811,7 @@ function startWebCandidate(session, reason = "") {
     return;
   }
 
-  if (candidate.type === "mpegts" && window.mpegts?.isSupported?.()) {
+  if (engine === "mpegtsjs") {
     try {
       const player = window.mpegts.createPlayer({ type: "mpegts", isLive: true, url: playbackUrl }, {
         enableWorker: true,
@@ -1724,6 +1884,7 @@ function startWebPlayback(media, item, { preview = false, startIndex = 0, surfac
     live: isLiveWebPlayback(item, preview),
     candidates,
     index: Math.max(0, Math.min(Number(startIndex) || 0, Math.max(0, candidates.length - 1))),
+    engineIndex: 0,
     hls: null,
     mpegts: null,
     listeners: [],
@@ -2193,6 +2354,8 @@ function renderPaymentReturn(status) {
 
 function syncPrimaryNavigation() {
   const actionByView = { live: "open-live", movies: "open-movies", series: "open-series", favorites: "open-favorites" };
+  const focusedBrowse = ["live", "movies", "series", "episodes", "favorites"].includes(state.view);
+  document.body.classList.toggle("catalog-focus-view", focusedBrowse);
   document.querySelectorAll(".sidebar .nav-item").forEach((item) => {
     const isHome = item.matches('[href="/"]') && state.view === "home";
     const isCurrentAction = item.dataset.action === actionByView[state.view];
@@ -2551,6 +2714,11 @@ document.addEventListener("click", (event) => {
   const action = event.target.closest("[data-action]")?.dataset.action;
   if (action === "open-tv-settings") openTvSettings();
   if (action === "toggle-autostart") toggleNativeAutoStart();
+  if (["set-player-engine", "set-quality-mode", "set-video-fit", "set-screen-size"].includes(action)) {
+    updatePlayerSetting(action, event.target.closest("[data-setting-value]")?.dataset.settingValue);
+  }
+  if (action === "settings-open-pairing") { closeTvSettings(); startPairing(); }
+  if (action === "settings-open-source") { closeTvSettings(); openSource("xtream"); }
   if (action === "open-source" && !event.target.closest("main")) openSource("xtream");
   if (action === "open-pairing" && !event.target.closest("main")) startPairing();
   if (action === "pairing-manual") { closePairing(); openSource("xtream"); }
@@ -2667,6 +2835,7 @@ window.addEventListener("resize", () => requestAnimationFrame(syncNativePreviewB
 
 async function boot() {
   setupTvEnvironment();
+  applyVisualPlayerSettings();
   try { state.config = await api("/api/config"); } catch {}
   bindForms();
   const restored = await restoreDeviceSnapshot();
