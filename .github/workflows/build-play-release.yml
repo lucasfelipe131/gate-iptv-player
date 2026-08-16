@@ -1,0 +1,120 @@
+name: Build signed GATE TV Google Play AAB
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  signed-play-bundle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install and test web application
+        run: |
+          npm ci
+          npm test
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK
+        run: sdkmanager "platforms;android-36" "build-tools;35.0.0"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.13"
+
+      - name: Restore private upload key
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+          required=(ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD)
+          for name in "${required[@]}"; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error title=Secret ausente::Configure o secret $name antes de gerar o AAB."
+              exit 1
+            fi
+          done
+          keystore="$RUNNER_TEMP/gate-upload.jks"
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$keystore"
+          test -s "$keystore"
+          chmod 600 "$keystore"
+          echo "ANDROID_KEYSTORE_PATH=$keystore" >> "$GITHUB_ENV"
+
+      - name: Validate upload certificate
+        run: |
+          set -euo pipefail
+          keytool -list -v \
+            -keystore "$ANDROID_KEYSTORE_PATH" \
+            -storepass "$ANDROID_KEYSTORE_PASSWORD" \
+            -alias "$ANDROID_KEY_ALIAS" \
+            -keypass "$ANDROID_KEY_PASSWORD" \
+            | sed -n '/Alias name:/p;/Valid from:/p;/SHA256:/p'
+
+      - name: Build signed Android TV app bundle
+        working-directory: platforms/android-native
+        run: gradle --no-daemon :app:lintRelease :app:bundleRelease
+
+      - name: Verify AAB, architectures and 16 KB compatibility
+        run: |
+          set -euo pipefail
+          aab=platforms/android-native/app/build/outputs/bundle/release/app-release.aab
+          test -s "$aab"
+          jarsigner -verify -strict -verbose -certs "$aab" >/tmp/jarsigner.txt
+          grep -q 'jar verified' /tmp/jarsigner.txt
+
+          unpacked="$RUNNER_TEMP/gate-aab"
+          rm -rf "$unpacked"
+          mkdir -p "$unpacked"
+          unzip -q "$aab" -d "$unpacked"
+          test -d "$unpacked/base/lib/arm64-v8a"
+          test -d "$unpacked/base/lib/armeabi-v7a"
+          ! find "$unpacked/base/lib" -mindepth 1 -maxdepth 1 -type d \
+            | grep -qE '/(x86|x86_64)$'
+
+          while IFS= read -r -d '' library; do
+            while read -r alignment; do
+              [ -n "$alignment" ] || continue
+              if (( alignment < 0x4000 )); then
+                echo "::error title=Biblioteca incompatível com páginas de 16 KB::$library possui LOAD align $alignment"
+                exit 1
+              fi
+            done < <(readelf -lW "$library" | awk '$1 == "LOAD" { print $NF }')
+          done < <(find "$unpacked/base/lib/arm64-v8a" -type f -name '*.so' -print0)
+
+      - name: Prepare Google Play artifact
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          source=platforms/android-native/app/build/outputs/bundle/release/app-release.aab
+          target=dist/GATE-TV-v0.6.5-Google-Play.aab
+          install -m 0444 "$source" "$target"
+          sha256sum "$target" > dist/GATE-TV-v0.6.5-Google-Play-SHA256.txt
+          sha256sum -c dist/GATE-TV-v0.6.5-Google-Play-SHA256.txt
+          stat -c '%n %s bytes' "$target"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GATE-TV-v0.6.5-Google-Play-AAB
+          path: dist/GATE-TV-v0.6.5-Google-Play-*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 90
