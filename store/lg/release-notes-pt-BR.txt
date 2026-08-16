@@ -1,0 +1,1 @@
+Primeira versão pública do GATE TV para LG webOS. Player independente para fontes autorizadas, com navegação por controle remoto, pareamento por QR Code, favoritos e interface em tela cheia. O aplicativo não fornece canais, listas, filmes ou credenciais.
