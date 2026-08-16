@@ -6,13 +6,14 @@
   "largeIcon": "assets/large-icon.png",
   "type": "web",
   "vendor": "Gate One Solucoes Digitais",
-  "version": "0.6.0",
-  "appDescription": "Player autorizado para webOS TV 22 ou superior",
+  "version": "0.6.1",
+  "appDescription": "Player autorizado e otimizado para webOS TV 22 ou superior",
   "resolution": "1920x1080",
   "bgColor": "#050a13",
   "iconColor": "#050a13",
   "splashBackground": "assets/splash.png",
   "disableBackHistoryAPI": true,
   "handlesRelaunch": false,
-  "transparent": false
+  "transparent": false,
+  "supportTouchMode": "virtual"
 }

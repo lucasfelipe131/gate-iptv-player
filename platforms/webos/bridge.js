@@ -2,7 +2,7 @@
   "use strict";
 
   var PLATFORM = "webos";
-  var SHELL_VERSION = "0.6.0";
+  var SHELL_VERSION = "0.6.1";
   var APP_ORIGIN = "https://gate-iptv-player-production.up.railway.app";
   var APP_URL = APP_ORIGIN + "/";
   var WATCHDOG_INTERVAL_MS = 3000;
@@ -59,6 +59,8 @@
     target.searchParams.set("platform", PLATFORM);
     target.searchParams.set("shellVersion", SHELL_VERSION);
     target.searchParams.set("nativePlayer", "webos-watchdog");
+    target.searchParams.set("safe", "1");
+    target.searchParams.set("revision", "0.6.1");
     return target.href;
   }
 

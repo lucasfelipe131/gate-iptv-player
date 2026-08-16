@@ -20,3 +20,5 @@ sh scripts/package-webos.sh
 4. Abra com `ares-launch -d myTV com.gateone.app.gateiptvplayer`.
 
 O app não inclui canais, filmes, séries, listas ou credenciais. Cada usuário conecta apenas uma fonte que tenha autorização para utilizar.
+
+> Build 0.6.1: o pacote definitivo agora usa `platforms/webos` e o modo seguro hospedado.

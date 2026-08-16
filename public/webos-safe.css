@@ -1,0 +1,266 @@
+/* GATE LG webOS Safe UI 1.0
+   Lightweight visual layer for Chromium 79 TVs. It keeps the larger
+   channel artwork and readable focus states without the persistent
+   sidebar, expensive effects or continuous UI observers. */
+
+body.webos-tv.webos-safe-mode {
+  overflow: hidden !important;
+  background: #050a13 !important;
+  font-family: Arial, Helvetica, sans-serif !important;
+}
+
+body.webos-tv.webos-safe-mode::before { display: none !important; }
+
+body.webos-tv.webos-safe-mode .app-shell {
+  display: block !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  overflow: hidden !important;
+}
+
+body.webos-tv.webos-safe-mode .sidebar { display: none !important; }
+
+body.webos-tv.webos-safe-mode main {
+  width: 100% !important;
+  height: 100vh !important;
+  min-height: 0 !important;
+  padding: 18px 26px 28px !important;
+  overflow: hidden !important;
+}
+
+body.webos-tv.webos-safe-mode .topbar {
+  height: 68px !important;
+  margin: 0 0 10px !important;
+}
+
+body.webos-tv.webos-safe-mode .top-brand img {
+  width: 50px !important;
+  height: 50px !important;
+}
+
+body.webos-tv.webos-safe-mode .top-brand strong { font-size: 22px !important; }
+body.webos-tv.webos-safe-mode .top-brand small { font-size: 9px !important; }
+
+body.webos-tv.webos-safe-mode .round-action {
+  width: 50px !important;
+  height: 50px !important;
+  border-radius: 14px !important;
+}
+
+body.webos-tv.webos-safe-mode .tv-home-head {
+  margin: 14px 0 18px !important;
+}
+
+body.webos-tv.webos-safe-mode .tv-home-head h1 {
+  font-size: 48px !important;
+  line-height: 1.04 !important;
+}
+
+body.webos-tv.webos-safe-mode .account-strip {
+  width: min(940px, 100%) !important;
+  min-height: 70px !important;
+  margin-bottom: 18px !important;
+  padding: 12px 18px !important;
+}
+
+body.webos-tv.webos-safe-mode .library-launchers {
+  width: min(1220px, 100%) !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  gap: 16px !important;
+}
+
+body.webos-tv.webos-safe-mode .library-launch {
+  min-height: 205px !important;
+  padding: 26px 28px !important;
+  border-radius: 20px !important;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, .22) !important;
+}
+
+body.webos-tv.webos-safe-mode .launcher-icon {
+  width: 82px !important;
+  height: 82px !important;
+  border-radius: 20px !important;
+}
+
+body.webos-tv.webos-safe-mode .launcher-icon .ui-icon {
+  width: 46px !important;
+  height: 46px !important;
+}
+
+body.webos-tv.webos-safe-mode .library-launch strong { font-size: 31px !important; }
+body.webos-tv.webos-safe-mode .library-launch small { font-size: 16px !important; }
+
+body.webos-tv.webos-safe-mode .catalog-titlebar {
+  min-height: 72px !important;
+  margin-bottom: 10px !important;
+}
+
+body.webos-tv.webos-safe-mode .catalog-titlebar h1 { font-size: 40px !important; }
+
+body.webos-tv.webos-safe-mode .catalog-layout {
+  height: calc(100vh - 164px) !important;
+  min-height: 0 !important;
+  grid-template-columns: 270px minmax(0, 1fr) !important;
+  gap: 14px !important;
+}
+
+body.webos-tv.webos-safe-mode .catalog-categories,
+body.webos-tv.webos-safe-mode .live-channel-column,
+body.webos-tv.webos-safe-mode .live-preview-panel {
+  border-radius: 16px !important;
+  border-width: 1px !important;
+  box-shadow: none !important;
+  background: #091221 !important;
+}
+
+body.webos-tv.webos-safe-mode .search-box {
+  min-height: 52px !important;
+  font-size: 16px !important;
+}
+
+body.webos-tv.webos-safe-mode .category-chip {
+  min-height: 48px !important;
+  padding: 10px 12px !important;
+  font-size: 15px !important;
+}
+
+body.webos-tv.webos-safe-mode .catalog-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+  gap: 13px !important;
+}
+
+body.webos-tv.webos-safe-mode .media-card {
+  min-height: 205px !important;
+  padding: 15px !important;
+  border-radius: 14px !important;
+}
+
+body.webos-tv.webos-safe-mode .poster-grid .media-card {
+  min-height: 300px !important;
+}
+
+body.webos-tv.webos-safe-mode .media-card strong {
+  font-size: 17px !important;
+  line-height: 1.22 !important;
+}
+
+body.webos-tv.webos-safe-mode .media-card small,
+body.webos-tv.webos-safe-mode .card-epg,
+body.webos-tv.webos-safe-mode .card-synopsis {
+  font-size: 12px !important;
+}
+
+body.webos-tv.webos-safe-mode .live-layout {
+  height: calc(100vh - 164px) !important;
+  min-height: 0 !important;
+  grid-template-columns: 225px 500px minmax(0, 1fr) !important;
+  gap: 14px !important;
+}
+
+body.webos-tv.webos-safe-mode .channel-list-head {
+  height: 50px !important;
+  padding: 0 14px !important;
+  font-size: 10px !important;
+}
+
+body.webos-tv.webos-safe-mode .live-channel-list {
+  height: calc(100% - 50px) !important;
+  padding: 7px !important;
+}
+
+body.webos-tv.webos-safe-mode .live-channel-row {
+  min-height: 90px !important;
+  grid-template-columns: 72px minmax(0, 1fr) 32px !important;
+  gap: 13px !important;
+  margin-bottom: 5px !important;
+  padding: 8px 11px !important;
+  border: 2px solid transparent !important;
+  border-radius: 13px !important;
+  background: rgba(255, 255, 255, .025) !important;
+}
+
+body.webos-tv.webos-safe-mode .channel-logo {
+  width: 70px !important;
+  height: 70px !important;
+  overflow: hidden !important;
+  border: 1px solid rgba(255, 255, 255, .16) !important;
+  border-radius: 14px !important;
+  background: #111d2f !important;
+}
+
+body.webos-tv.webos-safe-mode .channel-logo img {
+  width: 100% !important;
+  height: 100% !important;
+  padding: 4px !important;
+  object-fit: contain !important;
+}
+
+body.webos-tv.webos-safe-mode .live-channel-row strong {
+  font-size: 19px !important;
+  line-height: 1.2 !important;
+}
+
+body.webos-tv.webos-safe-mode .live-channel-row small {
+  margin-top: 5px !important;
+  font-size: 13px !important;
+  line-height: 1.25 !important;
+}
+
+body.webos-tv.webos-safe-mode .live-preview-panel { padding: 12px !important; }
+
+body.webos-tv.webos-safe-mode .live-preview-stage {
+  height: 360px !important;
+  min-height: 360px !important;
+  border-radius: 14px !important;
+  box-shadow: none !important;
+}
+
+body.webos-tv.webos-safe-mode .live-channel-title strong { font-size: 22px !important; }
+body.webos-tv.webos-safe-mode .epg-card strong { font-size: 15px !important; }
+body.webos-tv.webos-safe-mode .epg-card p { font-size: 12px !important; }
+
+body.webos-tv.webos-safe-mode .focusable:focus,
+body.webos-tv.webos-safe-mode .remote-focused {
+  outline: 4px solid #d5ff47 !important;
+  outline-offset: 2px !important;
+  box-shadow: 0 0 0 6px rgba(213, 255, 71, .16) !important;
+  transform: none !important;
+  z-index: 20 !important;
+}
+
+body.webos-tv.webos-safe-mode .live-channel-row:focus,
+body.webos-tv.webos-safe-mode .live-channel-row.remote-focused {
+  border-color: #d5ff47 !important;
+  background: rgba(213, 255, 71, .10) !important;
+}
+
+body.webos-tv.webos-safe-mode .tv-control-hint { display: none !important; }
+
+body.webos-tv.webos-safe-mode *,
+body.webos-tv.webos-safe-mode *::before,
+body.webos-tv.webos-safe-mode *::after {
+  animation: none !important;
+  transition: none !important;
+  scroll-behavior: auto !important;
+}
+
+body.webos-tv.webos-safe-mode .details-backdrop,
+body.webos-tv.webos-safe-mode .preview-glow {
+  filter: none !important;
+}
+
+@media (max-height: 760px) {
+  body.webos-tv.webos-safe-mode main { padding: 10px 18px 18px !important; }
+  body.webos-tv.webos-safe-mode .topbar { height: 54px !important; }
+  body.webos-tv.webos-safe-mode .catalog-titlebar { min-height: 58px !important; }
+  body.webos-tv.webos-safe-mode .catalog-layout,
+  body.webos-tv.webos-safe-mode .live-layout { height: calc(100vh - 126px) !important; }
+  body.webos-tv.webos-safe-mode .live-layout { grid-template-columns: 190px 410px minmax(0, 1fr) !important; }
+  body.webos-tv.webos-safe-mode .live-channel-row {
+    min-height: 72px !important;
+    grid-template-columns: 56px minmax(0, 1fr) 28px !important;
+  }
+  body.webos-tv.webos-safe-mode .channel-logo { width: 54px !important; height: 54px !important; }
+  body.webos-tv.webos-safe-mode .live-preview-stage { height: 280px !important; min-height: 280px !important; }
+  body.webos-tv.webos-safe-mode .library-launch { min-height: 170px !important; }
+}

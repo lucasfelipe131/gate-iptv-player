@@ -740,6 +740,16 @@ function respondWithCheckout(_req, res) {
   });
 }
 
+app.post("/api/client-diagnostics", (req, res) => {
+    const platform = String(req.body?.platform || "unknown").replace(/[^a-z0-9_-]/gi, "").slice(0, 30);
+    const kind = String(req.body?.kind || "event").replace(/[^a-z0-9_-]/gi, "").slice(0, 40);
+    const message = String(req.body?.message || "").replace(/[\r\n]/g, " ").slice(0, 500);
+    const extra = String(req.body?.extra || "").replace(/[\r\n]/g, " ").slice(0, 300);
+    console.warn(`CLIENT_DIAGNOSTIC platform=${platform} kind=${kind} message=${JSON.stringify(message)} extra=${JSON.stringify(extra)}`);
+    res.setHeader("cache-control", "no-store");
+    return res.status(204).end();
+  });
+  
 app.get("/health", (_req, res) => res.json({ ok: true, service: "gate-iptv-player", version: APP_VERSION }));
 app.get("/api/config", (_req, res) => {
   const billing = billingConfiguration();
@@ -1168,6 +1178,15 @@ setInterval(() => {
 
 app.use("/vendor/hls.min.js", express.static(path.join(__dirname, "node_modules/hls.js/dist/hls.min.js")));
 app.use("/vendor/mpegts.min.js", express.static(path.join(__dirname, "node_modules/mpegts.js/dist/mpegts.js")));
+function servePlatformIndex(req, res, next) {
+    if (String(req.query?.platform || "").toLowerCase() !== "webos") return next();
+    res.setHeader("cache-control", "no-cache, no-store, must-revalidate");
+    res.setHeader("x-gate-ui-mode", "webos-safe-1.0.0");
+    return res.sendFile(path.join(__dirname, "public/index-webos.html"));
+  }
+  app.get("/", servePlatformIndex);
+  app.get("/index.html", servePlatformIndex);
+  
 app.use(express.static(path.join(__dirname, "public"), {
   maxAge: "1h",
   setHeaders(res, filePath) {
