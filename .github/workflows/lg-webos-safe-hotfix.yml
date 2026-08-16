@@ -1,0 +1,751 @@
+name: Apply LG webOS Safe Mode Hotfix
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/lg-webos-safe-hotfix.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply-hotfix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Apply lightweight webOS safe mode
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          import re
+
+          root = Path('.')
+
+          safe_css = r'''/* GATE LG webOS Safe UI 1.0
+             Lightweight visual layer for Chromium 79 TVs. It keeps the larger
+             channel artwork and readable focus states without the persistent
+             sidebar, expensive effects or continuous UI observers. */
+
+          body.webos-tv.webos-safe-mode {
+            overflow: hidden !important;
+            background: #050a13 !important;
+            font-family: Arial, Helvetica, sans-serif !important;
+          }
+
+          body.webos-tv.webos-safe-mode::before { display: none !important; }
+
+          body.webos-tv.webos-safe-mode .app-shell {
+            display: block !important;
+            width: 100vw !important;
+            height: 100vh !important;
+            overflow: hidden !important;
+          }
+
+          body.webos-tv.webos-safe-mode .sidebar { display: none !important; }
+
+          body.webos-tv.webos-safe-mode main {
+            width: 100% !important;
+            height: 100vh !important;
+            min-height: 0 !important;
+            padding: 18px 26px 28px !important;
+            overflow: hidden !important;
+          }
+
+          body.webos-tv.webos-safe-mode .topbar {
+            height: 68px !important;
+            margin: 0 0 10px !important;
+          }
+
+          body.webos-tv.webos-safe-mode .top-brand img {
+            width: 50px !important;
+            height: 50px !important;
+          }
+
+          body.webos-tv.webos-safe-mode .top-brand strong { font-size: 22px !important; }
+          body.webos-tv.webos-safe-mode .top-brand small { font-size: 9px !important; }
+
+          body.webos-tv.webos-safe-mode .round-action {
+            width: 50px !important;
+            height: 50px !important;
+            border-radius: 14px !important;
+          }
+
+          body.webos-tv.webos-safe-mode .tv-home-head {
+            margin: 14px 0 18px !important;
+          }
+
+          body.webos-tv.webos-safe-mode .tv-home-head h1 {
+            font-size: 48px !important;
+            line-height: 1.04 !important;
+          }
+
+          body.webos-tv.webos-safe-mode .account-strip {
+            width: min(940px, 100%) !important;
+            min-height: 70px !important;
+            margin-bottom: 18px !important;
+            padding: 12px 18px !important;
+          }
+
+          body.webos-tv.webos-safe-mode .library-launchers {
+            width: min(1220px, 100%) !important;
+            grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+            gap: 16px !important;
+          }
+
+          body.webos-tv.webos-safe-mode .library-launch {
+            min-height: 205px !important;
+            padding: 26px 28px !important;
+            border-radius: 20px !important;
+            box-shadow: 0 12px 30px rgba(0, 0, 0, .22) !important;
+          }
+
+          body.webos-tv.webos-safe-mode .launcher-icon {
+            width: 82px !important;
+            height: 82px !important;
+            border-radius: 20px !important;
+          }
+
+          body.webos-tv.webos-safe-mode .launcher-icon .ui-icon {
+            width: 46px !important;
+            height: 46px !important;
+          }
+
+          body.webos-tv.webos-safe-mode .library-launch strong { font-size: 31px !important; }
+          body.webos-tv.webos-safe-mode .library-launch small { font-size: 16px !important; }
+
+          body.webos-tv.webos-safe-mode .catalog-titlebar {
+            min-height: 72px !important;
+            margin-bottom: 10px !important;
+          }
+
+          body.webos-tv.webos-safe-mode .catalog-titlebar h1 { font-size: 40px !important; }
+
+          body.webos-tv.webos-safe-mode .catalog-layout {
+            height: calc(100vh - 164px) !important;
+            min-height: 0 !important;
+            grid-template-columns: 270px minmax(0, 1fr) !important;
+            gap: 14px !important;
+          }
+
+          body.webos-tv.webos-safe-mode .catalog-categories,
+          body.webos-tv.webos-safe-mode .live-channel-column,
+          body.webos-tv.webos-safe-mode .live-preview-panel {
+            border-radius: 16px !important;
+            border-width: 1px !important;
+            box-shadow: none !important;
+            background: #091221 !important;
+          }
+
+          body.webos-tv.webos-safe-mode .search-box {
+            min-height: 52px !important;
+            font-size: 16px !important;
+          }
+
+          body.webos-tv.webos-safe-mode .category-chip {
+            min-height: 48px !important;
+            padding: 10px 12px !important;
+            font-size: 15px !important;
+          }
+
+          body.webos-tv.webos-safe-mode .catalog-grid {
+            grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+            gap: 13px !important;
+          }
+
+          body.webos-tv.webos-safe-mode .media-card {
+            min-height: 205px !important;
+            padding: 15px !important;
+            border-radius: 14px !important;
+          }
+
+          body.webos-tv.webos-safe-mode .poster-grid .media-card {
+            min-height: 300px !important;
+          }
+
+          body.webos-tv.webos-safe-mode .media-card strong {
+            font-size: 17px !important;
+            line-height: 1.22 !important;
+          }
+
+          body.webos-tv.webos-safe-mode .media-card small,
+          body.webos-tv.webos-safe-mode .card-epg,
+          body.webos-tv.webos-safe-mode .card-synopsis {
+            font-size: 12px !important;
+          }
+
+          body.webos-tv.webos-safe-mode .live-layout {
+            height: calc(100vh - 164px) !important;
+            min-height: 0 !important;
+            grid-template-columns: 225px 500px minmax(0, 1fr) !important;
+            gap: 14px !important;
+          }
+
+          body.webos-tv.webos-safe-mode .channel-list-head {
+            height: 50px !important;
+            padding: 0 14px !important;
+            font-size: 10px !important;
+          }
+
+          body.webos-tv.webos-safe-mode .live-channel-list {
+            height: calc(100% - 50px) !important;
+            padding: 7px !important;
+          }
+
+          body.webos-tv.webos-safe-mode .live-channel-row {
+            min-height: 90px !important;
+            grid-template-columns: 72px minmax(0, 1fr) 32px !important;
+            gap: 13px !important;
+            margin-bottom: 5px !important;
+            padding: 8px 11px !important;
+            border: 2px solid transparent !important;
+            border-radius: 13px !important;
+            background: rgba(255, 255, 255, .025) !important;
+          }
+
+          body.webos-tv.webos-safe-mode .channel-logo {
+            width: 70px !important;
+            height: 70px !important;
+            overflow: hidden !important;
+            border: 1px solid rgba(255, 255, 255, .16) !important;
+            border-radius: 14px !important;
+            background: #111d2f !important;
+          }
+
+          body.webos-tv.webos-safe-mode .channel-logo img {
+            width: 100% !important;
+            height: 100% !important;
+            padding: 4px !important;
+            object-fit: contain !important;
+          }
+
+          body.webos-tv.webos-safe-mode .live-channel-row strong {
+            font-size: 19px !important;
+            line-height: 1.2 !important;
+          }
+
+          body.webos-tv.webos-safe-mode .live-channel-row small {
+            margin-top: 5px !important;
+            font-size: 13px !important;
+            line-height: 1.25 !important;
+          }
+
+          body.webos-tv.webos-safe-mode .live-preview-panel { padding: 12px !important; }
+
+          body.webos-tv.webos-safe-mode .live-preview-stage {
+            height: 360px !important;
+            min-height: 360px !important;
+            border-radius: 14px !important;
+            box-shadow: none !important;
+          }
+
+          body.webos-tv.webos-safe-mode .live-channel-title strong { font-size: 22px !important; }
+          body.webos-tv.webos-safe-mode .epg-card strong { font-size: 15px !important; }
+          body.webos-tv.webos-safe-mode .epg-card p { font-size: 12px !important; }
+
+          body.webos-tv.webos-safe-mode .focusable:focus,
+          body.webos-tv.webos-safe-mode .remote-focused {
+            outline: 4px solid #d5ff47 !important;
+            outline-offset: 2px !important;
+            box-shadow: 0 0 0 6px rgba(213, 255, 71, .16) !important;
+            transform: none !important;
+            z-index: 20 !important;
+          }
+
+          body.webos-tv.webos-safe-mode .live-channel-row:focus,
+          body.webos-tv.webos-safe-mode .live-channel-row.remote-focused {
+            border-color: #d5ff47 !important;
+            background: rgba(213, 255, 71, .10) !important;
+          }
+
+          body.webos-tv.webos-safe-mode .tv-control-hint { display: none !important; }
+
+          body.webos-tv.webos-safe-mode *,
+          body.webos-tv.webos-safe-mode *::before,
+          body.webos-tv.webos-safe-mode *::after {
+            animation: none !important;
+            transition: none !important;
+            scroll-behavior: auto !important;
+          }
+
+          body.webos-tv.webos-safe-mode .details-backdrop,
+          body.webos-tv.webos-safe-mode .preview-glow {
+            filter: none !important;
+          }
+
+          @media (max-height: 760px) {
+            body.webos-tv.webos-safe-mode main { padding: 10px 18px 18px !important; }
+            body.webos-tv.webos-safe-mode .topbar { height: 54px !important; }
+            body.webos-tv.webos-safe-mode .catalog-titlebar { min-height: 58px !important; }
+            body.webos-tv.webos-safe-mode .catalog-layout,
+            body.webos-tv.webos-safe-mode .live-layout { height: calc(100vh - 126px) !important; }
+            body.webos-tv.webos-safe-mode .live-layout { grid-template-columns: 190px 410px minmax(0, 1fr) !important; }
+            body.webos-tv.webos-safe-mode .live-channel-row {
+              min-height: 72px !important;
+              grid-template-columns: 56px minmax(0, 1fr) 28px !important;
+            }
+            body.webos-tv.webos-safe-mode .channel-logo { width: 54px !important; height: 54px !important; }
+            body.webos-tv.webos-safe-mode .live-preview-stage { height: 280px !important; min-height: 280px !important; }
+            body.webos-tv.webos-safe-mode .library-launch { min-height: 170px !important; }
+          }
+          '''
+          Path('public/webos-safe.css').write_text(safe_css.strip() + '\n', encoding='utf-8')
+
+          bootstrap_js = r'''(function () {
+            "use strict";
+            var ua = navigator.userAgent || "";
+            var params;
+            try { params = new URLSearchParams(window.location.search || ""); }
+            catch (_error) { params = { get: function () { return ""; } }; }
+            var isWebOS = String(params.get("platform") || "").toLowerCase() === "webos" || /Web0S|WebOS|NetCast/i.test(ua);
+            if (!isWebOS) return;
+
+            document.body.classList.add("webos-tv", "webos-safe-mode", "tv-optimized");
+            document.body.classList.remove("gate-tv-v2", "gate-browser-polish", "browser-mode");
+            document.documentElement.setAttribute("data-platform", "webos");
+            document.documentElement.setAttribute("data-tv-platform", "webos");
+            try { sessionStorage.setItem("gate.adShown", "true"); } catch (_error) {}
+
+            function diagnostics(kind, message, extra) {
+              try {
+                var xhr = new XMLHttpRequest();
+                xhr.open("POST", "/api/client-diagnostics", true);
+                xhr.setRequestHeader("content-type", "application/json");
+                xhr.send(JSON.stringify({
+                  platform: "webos",
+                  kind: String(kind || "event").slice(0, 40),
+                  message: String(message || "").slice(0, 500),
+                  extra: String(extra || "").slice(0, 300),
+                  userAgent: String(ua).slice(0, 260)
+                }));
+              } catch (_error) {}
+            }
+
+            if (navigator.serviceWorker) {
+              try {
+                navigator.serviceWorker.getRegistrations().then(function (registrations) {
+                  registrations.forEach(function (registration) { registration.unregister().catch(function () {}); });
+                }).catch(function () {});
+              } catch (_error) {}
+              try {
+                navigator.serviceWorker.register = function () {
+                  return Promise.reject(new Error("Service Worker disabled on LG webOS safe mode."));
+                };
+              } catch (_error) {}
+            }
+
+            if (window.caches && typeof window.caches.keys === "function") {
+              window.caches.keys().then(function (keys) {
+                keys.filter(function (key) { return key.indexOf("gate-player-") === 0; })
+                  .forEach(function (key) { window.caches.delete(key).catch(function () {}); });
+              }).catch(function () {});
+            }
+
+            window.addEventListener("error", function (event) {
+              diagnostics("javascript-error", event.message, (event.filename || "") + ":" + (event.lineno || 0));
+            });
+            window.addEventListener("unhandledrejection", function (event) {
+              diagnostics("promise-rejection", event.reason && (event.reason.message || event.reason), "");
+            });
+
+            window.setTimeout(function () {
+              var main = document.getElementById("main-content");
+              var rendered = Boolean(main && main.children && main.children.length);
+              diagnostics(rendered ? "ui-ready" : "ui-empty", rendered ? "Interface renderizada" : "A interface não renderizou em 6 segundos", "safe-1.0.0");
+              if (!rendered && main) {
+                main.innerHTML = '<section style="padding:70px;text-align:center"><h1 style="font-size:46px">Recuperando o GATE TV</h1><p style="font-size:22px;color:#aebbd0">Pressione Voltar e abra o aplicativo novamente.</p></section>';
+              }
+            }, 6000);
+
+            window.GateWebOSSafe = { version: "1.0.0", diagnostics: diagnostics };
+            diagnostics("bootstrap", "Modo seguro LG iniciado", "safe-1.0.0");
+          }());'''
+          Path('public/webos-safe-bootstrap.js').write_text(bootstrap_js.strip() + '\n', encoding='utf-8')
+
+          remote_js = r'''(function () {
+            "use strict";
+            var ua = navigator.userAgent || "";
+            var params;
+            try { params = new URLSearchParams(window.location.search || ""); }
+            catch (_error) { params = { get: function () { return ""; } }; }
+            var isWebOS = String(params.get("platform") || "").toLowerCase() === "webos" || /Web0S|WebOS|NetCast/i.test(ua);
+            if (!isWebOS) return;
+
+            document.body.classList.add("webos-tv", "webos-safe-mode", "webos-remote");
+            var lastFocused = null;
+            var focusTimer = 0;
+            var lastMoveAt = 0;
+
+            function visible(element) {
+              if (!element || !element.isConnected || element.disabled) return false;
+              var style;
+              try { style = window.getComputedStyle(element); } catch (_error) { return false; }
+              if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0) return false;
+              var rect = element.getBoundingClientRect();
+              return rect.width > 2 && rect.height > 2;
+            }
+
+            function activeScope() {
+              var ids = ["ad-overlay", "player-modal", "details-modal", "pairing-modal", "source-modal"];
+              for (var index = 0; index < ids.length; index += 1) {
+                var node = document.getElementById(ids[index]);
+                if (node && !node.classList.contains("hidden")) return node;
+              }
+              return document;
+            }
+
+            function focusableElements() {
+              var nodes = activeScope().querySelectorAll("[data-focusable]:not([disabled])");
+              var result = [];
+              for (var index = 0; index < nodes.length; index += 1) if (visible(nodes[index])) result.push(nodes[index]);
+              return result;
+            }
+
+            function mark(element) {
+              if (lastFocused && lastFocused !== element) lastFocused.classList.remove("remote-focused");
+              if (element && element.classList) element.classList.add("remote-focused");
+              lastFocused = element || null;
+            }
+
+            function focus(element) {
+              if (!visible(element)) return false;
+              try { element.focus(); } catch (_error) { return false; }
+              mark(element);
+              try { element.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "auto" }); }
+              catch (_error) { try { element.scrollIntoView(false); } catch (_ignored) {} }
+              return true;
+            }
+
+            function preferred() {
+              var selectors = [
+                ".library-launch",
+                ".live-channel-row.active",
+                ".live-channel-row",
+                ".category-chip.active",
+                ".catalog-grid .media-card",
+                "[data-action='go-home']",
+                ".primary-button",
+                ".top-brand",
+                "[data-focusable]"
+              ];
+              for (var index = 0; index < selectors.length; index += 1) {
+                var candidate = activeScope().querySelector(selectors[index]);
+                if (visible(candidate)) return candidate;
+              }
+              return null;
+            }
+
+            function ensureFocus() {
+              var elements = focusableElements();
+              if (!elements.length) return;
+              var active = document.activeElement;
+              if (elements.indexOf(active) >= 0 && visible(active)) return mark(active);
+              focus(preferred() || elements[0]);
+            }
+
+            function scheduleFocus(delay) {
+              window.clearTimeout(focusTimer);
+              focusTimer = window.setTimeout(ensureFocus, typeof delay === "number" ? delay : 120);
+            }
+
+            function linearMove(active, selector, direction) {
+              if (!active || !active.matches || !active.matches(selector)) return false;
+              var nodes = active.parentNode ? active.parentNode.querySelectorAll(selector) : [];
+              var list = [];
+              for (var index = 0; index < nodes.length; index += 1) if (visible(nodes[index])) list.push(nodes[index]);
+              var current = list.indexOf(active);
+              if (current < 0) return false;
+              var target = direction === "up" || direction === "left" ? current - 1 : current + 1;
+              if (target < 0 || target >= list.length) return false;
+              return focus(list[target]);
+            }
+
+            function move(direction) {
+              var now = Date.now();
+              if (now - lastMoveAt < 70) return;
+              lastMoveAt = now;
+              var active = document.activeElement;
+
+              if ((direction === "up" || direction === "down") && linearMove(active, ".live-channel-row", direction)) return;
+              if ((direction === "up" || direction === "down") && linearMove(active, ".category-chip", direction)) return;
+
+              var elements = focusableElements();
+              if (!elements.length) return;
+              if (elements.indexOf(active) < 0 || !visible(active)) return focus(preferred() || elements[0]);
+              var current = active.getBoundingClientRect();
+              var cx = current.left + current.width / 2;
+              var cy = current.top + current.height / 2;
+              var horizontal = direction === "left" || direction === "right";
+              var best = null;
+              var bestScore = Number.POSITIVE_INFINITY;
+
+              for (var index = 0; index < elements.length; index += 1) {
+                var element = elements[index];
+                if (element === active) continue;
+                var box = element.getBoundingClientRect();
+                var x = box.left + box.width / 2;
+                var y = box.top + box.height / 2;
+                var dx = x - cx;
+                var dy = y - cy;
+                var valid = direction === "left" ? dx < -5 : direction === "right" ? dx > 5 : direction === "up" ? dy < -5 : dy > 5;
+                if (!valid) continue;
+                var primary = horizontal ? Math.abs(dx) : Math.abs(dy);
+                var secondary = horizontal ? Math.abs(dy) : Math.abs(dx);
+                var score = primary * primary + secondary * secondary * 3.5;
+                if (score < bestScore) { bestScore = score; best = element; }
+              }
+              if (best) focus(best);
+            }
+
+            function direction(event, code) {
+              if (code === 37 || event.key === "ArrowLeft") return "left";
+              if (code === 38 || event.key === "ArrowUp") return "up";
+              if (code === 39 || event.key === "ArrowRight") return "right";
+              if (code === 40 || event.key === "ArrowDown") return "down";
+              return "";
+            }
+
+            function editable(element) {
+              return Boolean(element && element.matches && element.matches("input, textarea, select, [contenteditable='true']"));
+            }
+
+            window.addEventListener("keydown", function (event) {
+              var code = Number(event.keyCode || event.which || 0);
+              var back = code === 461 || code === 10009 || event.key === "BrowserBack" || event.key === "Escape";
+              if (back) { event.preventDefault(); return; }
+
+              var player = document.getElementById("player-modal");
+              if (player && !player.classList.contains("hidden")) return;
+              if (document.querySelector(".live-preview-stage.live-preview-immersive")) return;
+
+              var way = direction(event, code);
+              var active = document.activeElement;
+              if (way) {
+                if (editable(active) && (way === "left" || way === "right")) return;
+                event.preventDefault();
+                event.stopImmediatePropagation();
+                move(way);
+                return;
+              }
+
+              if (code === 13 || event.key === "Enter") {
+                if (editable(active)) return;
+                if (active && active !== document.body && typeof active.click === "function") {
+                  event.preventDefault();
+                  event.stopImmediatePropagation();
+                  active.click();
+                  scheduleFocus(140);
+                } else ensureFocus();
+              }
+            }, true);
+
+            document.addEventListener("focusin", function (event) {
+              if (event.target && event.target.matches && event.target.matches("[data-focusable]")) mark(event.target);
+            });
+
+            var observer = new MutationObserver(function (records) {
+              for (var index = 0; index < records.length; index += 1) {
+                if (records[index].addedNodes && records[index].addedNodes.length) return scheduleFocus(160);
+              }
+            });
+            observer.observe(document.body, { childList: true, subtree: true });
+
+            window.addEventListener("pageshow", function () { scheduleFocus(160); });
+            window.addEventListener("load", function () { scheduleFocus(180); });
+            scheduleFocus(180);
+            window.GateWebOSRemote = { version: "safe-1.0.0", ensureFocus: ensureFocus, moveFocus: move };
+          }());'''
+          Path('public/webos-remote-safe.js').write_text(remote_js.strip() + '\n', encoding='utf-8')
+
+          index_path = Path('public/index.html')
+          html = index_path.read_text(encoding='utf-8')
+          safe_html = html
+          remove_patterns = [
+            r'\n\s*<link[^>]+href="/web-ui\.css[^\"]*"[^>]*>',
+            r'\n\s*<link[^>]+href="/ui-polish\.css[^\"]*"[^>]*>',
+            r'\n\s*<script[^>]+src="/tizen-loader\.js[^\"]*"[^>]*></script>',
+            r'\n\s*<script[^>]+src="/platform-player\.js[^\"]*"[^>]*></script>',
+            r'\n\s*<script[^>]+src="/webos-remote\.js[^\"]*"[^>]*></script>',
+            r'\n\s*<script[^>]+src="/pro-ui\.js[^\"]*"[^>]*></script>'
+          ]
+          for pattern in remove_patterns:
+            safe_html = re.sub(pattern, '', safe_html)
+          safe_html = safe_html.replace(
+            '<link rel="stylesheet" href="/pro-ui.css?v=1.0.0" />',
+            '<link rel="stylesheet" href="/pro-ui.css?v=1.0.0" />\n  <link rel="stylesheet" href="/webos-safe.css?v=1.0.0" />'
+          )
+          safe_html = safe_html.replace(
+            '<script src="/app.js?v=0.6.1-web"></script>',
+            '<script src="/webos-safe-bootstrap.js?v=1.0.0"></script>\n  <script src="/app.js?v=0.6.1-web"></script>\n  <script src="/webos-remote-safe.js?v=1.0.0"></script>'
+          )
+          safe_html = safe_html.replace('<title>GATE IPTV PLAYER</title>', '<title>GATE TV · LG Safe Mode</title>')
+          Path('public/index-webos.html').write_text(safe_html, encoding='utf-8')
+
+          server_path = Path('server.mjs')
+          server = server_path.read_text(encoding='utf-8')
+          if 'app.post("/api/client-diagnostics"' not in server:
+            diagnostics_route = r'''app.post("/api/client-diagnostics", (req, res) => {
+              const platform = String(req.body?.platform || "unknown").replace(/[^a-z0-9_-]/gi, "").slice(0, 30);
+              const kind = String(req.body?.kind || "event").replace(/[^a-z0-9_-]/gi, "").slice(0, 40);
+              const message = String(req.body?.message || "").replace(/[\r\n]/g, " ").slice(0, 500);
+              const extra = String(req.body?.extra || "").replace(/[\r\n]/g, " ").slice(0, 300);
+              console.warn(`CLIENT_DIAGNOSTIC platform=${platform} kind=${kind} message=${JSON.stringify(message)} extra=${JSON.stringify(extra)}`);
+              res.setHeader("cache-control", "no-store");
+              return res.status(204).end();
+            });
+            '''
+            server = server.replace('app.get("/health"', diagnostics_route + '\napp.get("/health"', 1)
+          if 'function servePlatformIndex' not in server:
+            platform_route = r'''function servePlatformIndex(req, res, next) {
+              if (String(req.query?.platform || "").toLowerCase() !== "webos") return next();
+              res.setHeader("cache-control", "no-cache, no-store, must-revalidate");
+              res.setHeader("x-gate-ui-mode", "webos-safe-1.0.0");
+              return res.sendFile(path.join(__dirname, "public/index-webos.html"));
+            }
+            app.get("/", servePlatformIndex);
+            app.get("/index.html", servePlatformIndex);
+            '''
+            marker = 'app.use(express.static(path.join(__dirname, "public"), {'
+            if marker not in server:
+              raise SystemExit('Static middleware marker not found in server.mjs')
+            server = server.replace(marker, platform_route + '\n' + marker, 1)
+          server_path.write_text(server, encoding='utf-8')
+
+          docker_path = Path('Dockerfile')
+          docker = docker_path.read_text(encoding='utf-8')
+          old = '''RUN cp public/app.js /tmp/gate-app.js \\
+            && npm install --no-save --omit=dev esbuild@0.25.9 \\
+            && ./node_modules/.bin/esbuild /tmp/gate-app.js --target=chrome79 --outfile=public/app.js \\
+            && rm -f /tmp/gate-app.js'''
+          new = '''RUN npm install --no-save --omit=dev esbuild@0.25.9 \\
+            && for file in public/app.js public/platform-player.js public/tizen-loader.js public/webos-remote.js public/pro-ui.js public/webos-safe-bootstrap.js public/webos-remote-safe.js; do \\
+                 cp "$file" "/tmp/$(basename "$file")"; \\
+                 ./node_modules/.bin/esbuild "/tmp/$(basename "$file")" --target=chrome79 --outfile="$file"; \\
+               done \\
+            && rm -f /tmp/app.js /tmp/platform-player.js /tmp/tizen-loader.js /tmp/webos-remote.js /tmp/pro-ui.js /tmp/webos-safe-bootstrap.js /tmp/webos-remote-safe.js'''
+          if old not in docker:
+            raise SystemExit('Expected Docker transpilation block not found')
+          docker_path.write_text(docker.replace(old, new, 1), encoding='utf-8')
+
+          bridge_path = Path('platforms/webos/bridge.js')
+          bridge = bridge_path.read_text(encoding='utf-8')
+          bridge = bridge.replace('var SHELL_VERSION = "0.6.0";', 'var SHELL_VERSION = "0.6.1";')
+          bridge = bridge.replace('target.searchParams.set("nativePlayer", "webos-watchdog");', 'target.searchParams.set("nativePlayer", "webos-watchdog");\n    target.searchParams.set("safe", "1");\n    target.searchParams.set("revision", "0.6.1");')
+          bridge_path.write_text(bridge, encoding='utf-8')
+
+          appinfo_path = Path('platforms/webos/appinfo.json')
+          appinfo = json.loads(appinfo_path.read_text(encoding='utf-8'))
+          appinfo['version'] = '0.6.1'
+          appinfo['appDescription'] = 'Player autorizado e otimizado para LG webOS TV'
+          appinfo['supportTouchMode'] = 'virtual'
+          appinfo_path.write_text(json.dumps(appinfo, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+
+          workflow_path = Path('.github/workflows/build-webos.yml')
+          workflow = workflow_path.read_text(encoding='utf-8')
+          if "      - 'platforms/webos/**'" not in workflow:
+            workflow = workflow.replace("      - 'platforms/lg-webos/**'", "      - 'platforms/lg-webos/**'\n      - 'platforms/webos/**'")
+          for entry in [
+            "      - 'public/index-webos.html'",
+            "      - 'public/webos-safe.css'",
+            "      - 'public/webos-safe-bootstrap.js'",
+            "      - 'public/webos-remote-safe.js'"
+          ]:
+            if entry not in workflow:
+              workflow = workflow.replace("      - 'public/webos-remote.js'", "      - 'public/webos-remote.js'\n" + entry, 1)
+          workflow = workflow.replace("node --check public/webos-remote.js", "node --check public/webos-remote.js\n          node --check public/webos-safe-bootstrap.js\n          node --check public/webos-remote-safe.js")
+          workflow = workflow.replace("platforms/lg-webos/appinfo.json", "platforms/webos/appinfo.json")
+          workflow_path.write_text(workflow, encoding='utf-8')
+
+          test_js = r'''import assert from "node:assert/strict";
+          import { readFile } from "node:fs/promises";
+          import test from "node:test";
+
+          const read = (file) => readFile(new URL(`../${file}`, import.meta.url), "utf8");
+          const [html, css, bootstrap, remote, server, docker, appinfo, bridge] = await Promise.all([
+            read("public/index-webos.html"),
+            read("public/webos-safe.css"),
+            read("public/webos-safe-bootstrap.js"),
+            read("public/webos-remote-safe.js"),
+            read("server.mjs"),
+            read("Dockerfile"),
+            read("platforms/webos/appinfo.json"),
+            read("platforms/webos/bridge.js")
+          ]);
+
+          test("LG recebe HTML leve sem camadas de Tizen, browser ou UI dinâmica pesada", () => {
+            assert.match(html, /webos-safe\.css\?v=1\.0\.0/);
+            assert.match(html, /webos-safe-bootstrap\.js\?v=1\.0\.0/);
+            assert.match(html, /webos-remote-safe\.js\?v=1\.0\.0/);
+            assert.doesNotMatch(html, /tizen-loader\.js/);
+            assert.doesNotMatch(html, /platform-player\.js/);
+            assert.doesNotMatch(html, /web-ui\.css/);
+            assert.doesNotMatch(html, /ui-polish\.css/);
+            assert.doesNotMatch(html, /pro-ui\.js/);
+          });
+
+          test("modo seguro remove cache antigo e usa navegação sem observar mudanças de classe", () => {
+            assert.match(bootstrap, /getRegistrations/);
+            assert.match(bootstrap, /gate\.adShown/);
+            assert.match(bootstrap, /ui-empty/);
+            assert.match(remote, /childList:\s*true,\s*subtree:\s*true/);
+            assert.doesNotMatch(remote, /attributeFilter/);
+          });
+
+          test("layout LG mantém canais grandes e reduz a pressão visual", () => {
+            assert.match(css, /\.channel-logo[\s\S]*width:\s*70px/);
+            assert.match(css, /\.live-channel-row[\s\S]*min-height:\s*90px/);
+            assert.match(css, /\.catalog-grid[\s\S]*repeat\(4,/);
+            assert.match(css, /\.sidebar\s*\{\s*display:\s*none/);
+          });
+
+          test("servidor entrega a variante LG antes do middleware estático", () => {
+            assert.match(server, /function servePlatformIndex/);
+            assert.ok(server.indexOf('app.get("/", servePlatformIndex)') < server.indexOf('app.use(express.static'));
+            assert.match(server, /api\/client-diagnostics/);
+          });
+
+          test("todos os scripts de TV são convertidos para Chromium 79", () => {
+            assert.match(docker, /public\/platform-player\.js/);
+            assert.match(docker, /public\/webos-safe-bootstrap\.js/);
+            assert.match(docker, /public\/webos-remote-safe\.js/);
+          });
+
+          test("novo IPK webOS inicia diretamente na revisão segura 0.6.1", () => {
+            const info = JSON.parse(appinfo);
+            assert.equal(info.version, "0.6.1");
+            assert.equal(info.supportTouchMode, "virtual");
+            assert.match(bridge, /SHELL_VERSION = "0\.6\.1"/);
+            assert.match(bridge, /searchParams\.set\("safe", "1"\)/);
+          });
+          '''
+          Path('test/webos-safe-mode.test.mjs').write_text(test_js.strip() + '\n', encoding='utf-8')
+          PY
+
+      - name: Validate hotfix
+        run: |
+          npm ci
+          npm test
+          node --check public/webos-safe-bootstrap.js
+          node --check public/webos-remote-safe.js
+          node --check server.mjs
+          node -e "JSON.parse(require('fs').readFileSync('platforms/webos/appinfo.json','utf8'))"
+
+      - name: Commit hotfix
+        shell: bash
+        run: |
+          git config user.name "GATE TV Automation"
+          git config user.email "actions@users.noreply.github.com"
+          git add Dockerfile server.mjs public/index-webos.html public/webos-safe.css public/webos-safe-bootstrap.js public/webos-remote-safe.js platforms/webos/appinfo.json platforms/webos/bridge.js .github/workflows/build-webos.yml test/webos-safe-mode.test.mjs
+          git commit -m "fix: recover LG webOS with lightweight safe mode"
+          git push
