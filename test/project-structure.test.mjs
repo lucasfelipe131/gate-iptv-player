@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const read = (file) => readFile(path.join(root, file), "utf8");
 
-test("mantém quatro produtos separados e versionados em 0.6.2", async () => {
+test("mantém os produtos separados e publica o hotfix webOS 0.6.3", async () => {
   const [web, android, webos, tizen] = await Promise.all([
     read("platforms/web/platform.config.json"),
     read("platforms/android-native/app/build.gradle"),
@@ -17,7 +17,7 @@ test("mantém quatro produtos separados e versionados em 0.6.2", async () => {
 
   assert.equal(JSON.parse(web).version, "0.6.2");
   assert.match(android, /versionName '0\.6\.2'/);
-  assert.equal(JSON.parse(webos).version, "0.6.2");
+  assert.equal(JSON.parse(webos).version, "0.6.3");
   assert.match(tizen, /version="0\.6\.2"/);
 });
 
