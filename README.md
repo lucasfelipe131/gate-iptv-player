@@ -1,4 +1,4 @@
-# GATE TV 0.6.5
+# GATE TV 0.7.2
 
 Player multiplataforma para listas e fontes de mídia autorizadas. O GATE TV não
 fornece, hospeda ou vende canais, filmes, séries ou credenciais.
@@ -19,6 +19,33 @@ ativo é `platforms/webos`.
 
 ## O que mudou nesta versão
 
+Correções da auditoria de segurança e estabilidade:
+
+- **rota direta deixou de expor credenciais.** O parâmetro `?direct=1` foi
+  removido: nenhum cliente o usava e ele devolvia, em `Location`, a URL da
+  fonte com usuário e senha da conta Xtream. Configure `NATIVE_DIRECT_KEY`
+  para exigir prova de identidade do aplicativo nativo.
+- **teto de tickets por sessão.** O teto global fazia a lista de um usuário
+  despejar o ticket do canal que outro estava assistindo, derrubando a
+  transmissão no meio. Agora cada sessão tem o próprio limite e a expulsão é
+  O(1) em vez de varrer o mapa a cada registro.
+- **logotipos e capas por URL assinada.** Deixam de ocupar o mapa de
+  reprodução — eram uma entrada por item de catálogo.
+- **renovação silenciosa do link.** O player passa a chamar
+  `/api/stream/:token/refresh` antes de desistir do canal; a rota existia mas
+  nenhum cliente a chamava.
+- **tetos de memória menores** na leitura de catálogo, configuráveis por
+  `MAX_CATALOG_BYTES`, para não derrubar o contêiner por falta de memória.
+- **encerramento gracioso.** `SIGTERM` drena as conexões em vez de cortar a
+  transmissão a cada deploy.
+- **CSP sem `http:` em produção** e erro interno sem vazar detalhe da origem.
+- **uma única versão** para todas as plataformas, propagada por
+  `npm run sync-version` e verificada no CI.
+- **linter no CI** e remoção dos cinco workflows que reescreviam o próprio
+  repositório.
+
+Versões anteriores:
+
 - detecção de tela preta mesmo quando o áudio e o relógio do stream continuam;
 - recriação da superfície/decoder e reconexão com callbacks isolados por tentativa;
 - recuperação por relógio, buffer, fim inesperado e frames realmente renderizados;
@@ -31,6 +58,7 @@ ativo é `platforms/webos`.
 - opção configurável para abrir o APK após a inicialização da Android TV;
 - cache versionado para o APK não manter uma interface antiga;
 - preparação para anúncios VAST/Google IMA, desativados até receber uma tag real.
+
 
 ## Executar e testar
 

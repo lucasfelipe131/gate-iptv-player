@@ -2,6 +2,11 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
+import { readFileSync } from "node:fs";
+
+// Versao unica, lida do package.json — evita que os manifestos voltem a divergir.
+const APP_VERSION = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
+
 const read = (file) => readFile(new URL(`../${file}`, import.meta.url), "utf8");
 const [legacyHtml, shellHtml, androidHtml, css, bootstrap, remoteSafe, remote, runtime, server, docker, appinfo, bridge, platformPlayer] = await Promise.all([
   read("public/index-webos.html"),
@@ -53,9 +58,9 @@ test("scripts usados em TVs antigas continuam convertidos para Chromium 79", () 
   assert.match(docker, /public\/webos-remote-safe\.js/);
 });
 
-test("IPK 0.7.1 abre o layout Android TV na janela principal", () => {
+test("o IPK publicado abre o layout Android TV na janela principal", () => {
   const info = JSON.parse(appinfo);
-  assert.equal(info.version, "0.7.1");
+  assert.equal(info.version, APP_VERSION);
   assert.equal(info.supportTouchMode, "virtual");
   assert.ok(info.appDescription.length <= 60);
   assert.match(shellHtml, /http-equiv="refresh"/);

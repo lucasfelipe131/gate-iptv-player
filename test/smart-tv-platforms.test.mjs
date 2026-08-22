@@ -4,6 +4,11 @@ import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { readFileSync } from "node:fs";
+
+// Versao unica, lida do package.json — evita que os manifestos voltem a divergir.
+const APP_VERSION = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
+
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 
 test("webOS abre o layout Android TV diretamente, sem iframe bloqueando cliques", async () => {
@@ -17,7 +22,7 @@ test("webOS abre o layout Android TV diretamente, sem iframe bloqueando cliques"
 
   assert.equal(manifest.main, "index.html");
   assert.equal(manifest.type, "web");
-  assert.equal(manifest.version, "0.7.1");
+  assert.equal(manifest.version, APP_VERSION);
   assert.equal(manifest.disableBackHistoryAPI, true);
   assert.ok(manifest.appDescription.length <= 60);
   assert.match(documentation, /webOS TV 22 ou superior/);

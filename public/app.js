@@ -1676,6 +1676,23 @@ function scheduleWebTask(session, callback, delay, attempt = session?.attempt) {
   return timer;
 }
 
+// O servidor emite /api/stream/:token com validade propria. Quando o ticket
+// caduca, o canal morria em silencio porque nenhum cliente chamava a renovacao.
+function refreshStreamTicket(session, candidate) {
+  const token = /\/api\/stream\/([A-Za-z0-9_-]+)/.exec(String(candidate?.url || ""))?.[1];
+  if (!token || !session || session.destroyed || session.ticketRefreshes >= 2) return Promise.resolve(false);
+  session.ticketRefreshes += 1;
+  return fetch(`/api/stream/${token}/refresh`, { method: "POST", cache: "no-store" })
+    .then((response) => (response.ok ? response.json() : null))
+    .then((data) => {
+      if (!data?.playUrl || session.destroyed) return false;
+      candidate.url = data.playUrl;
+      if (data.streamType) candidate.type = data.streamType;
+      return true;
+    })
+    .catch(() => false);
+}
+
 function isCurrentWebAttempt(session, attempt) {
   return Boolean(session && !session.destroyed && session.attempt === attempt);
 }
@@ -1828,8 +1845,11 @@ function retryWebCandidate(session, message, { preserveNetworkRetries = false } 
   session.unexpectedPauseAt = 0;
   playbackStatus(session, message || "Reconectando o canal…");
   scheduleWebTask(session, () => {
-    session.switching = false;
-    startWebCandidate(session, message);
+    refreshStreamTicket(session, session.candidates[session.index]).then(() => {
+      if (session.destroyed) return;
+      session.switching = false;
+      startWebCandidate(session, message);
+    });
   }, session.preview ? 350 : 700, session.attempt);
 }
 
@@ -1891,6 +1911,11 @@ function startWebCandidate(session, reason = "") {
         if (/stalled|buffer|fragloaderror|levelloaderror/.test(detail) && !session.starvedAt) {
           session.starvedAt = Date.now();
         }
+        return;
+      }
+      if (data.type === window.Hls.ErrorTypes.NETWORK_ERROR && Number(data.response?.code) === 404
+        && session.ticketRefreshes < 2) {
+        retryWebCandidate(session, "Renovando o link de reprodução…");
         return;
       }
       if (!candidate.direct && data.type === window.Hls.ErrorTypes.NETWORK_ERROR && session.networkRetries < 2) {
@@ -2002,6 +2027,7 @@ function startWebPlayback(media, item, { preview = false, startIndex = 0, surfac
     networkRetries: 0,
     mediaRetries: 0,
     stallRetries: 0,
+    ticketRefreshes: 0,
     routeRounds: 0,
     lastPlayAttemptAt: 0,
     unexpectedPauseAt: 0,
