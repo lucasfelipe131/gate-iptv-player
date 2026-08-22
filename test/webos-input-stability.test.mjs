@@ -2,6 +2,11 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
+import { readFileSync } from "node:fs";
+
+// Versao unica, lida do package.json — evita que os manifestos voltem a divergir.
+const APP_VERSION = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
+
 const read = (file) => readFile(new URL(`../${file}`, import.meta.url), "utf8");
 const [app, remote, runtime, html, css, appinfo] = await Promise.all([
   read("public/app.js"),
@@ -48,5 +53,5 @@ test("modal e foco do QR têm uma camada visível específica para a LG", () => 
   assert.match(css, /#pairing-modal \.pairing-card/);
   assert.match(css, /\.modal:not\(\.hidden\)/);
   assert.match(css, /outline: 5px solid #d5ff47/);
-  assert.equal(JSON.parse(appinfo).version, "0.7.1");
+  assert.equal(JSON.parse(appinfo).version, APP_VERSION);
 });

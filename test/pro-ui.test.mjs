@@ -2,6 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
+import { readFileSync } from "node:fs";
+
+// Versao unica, lida do package.json — evita que os manifestos voltem a divergir.
+const APP_VERSION = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
+
 const [indexHtml, proCss, proJs, polishCss, serviceWorker] = await Promise.all([
   readFile(new URL("../public/index.html", import.meta.url), "utf8"),
   readFile(new URL("../public/pro-ui.css", import.meta.url), "utf8"),

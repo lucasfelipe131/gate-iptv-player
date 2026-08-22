@@ -1,0 +1,31 @@
+name: Lint e testes
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verificar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Versão coerente entre as plataformas
+        run: |
+          node scripts/sync-version.mjs
+          git diff --exit-code || {
+            echo "::error::Os manifestos estão fora da versão do package.json. Rode: npm run sync-version"
+            exit 1
+          }
+      - run: npm run lint
+      - run: npm test

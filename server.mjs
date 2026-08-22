@@ -6,19 +6,42 @@ import net from "node:net";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
+import { readFileSync } from "node:fs";
 import express from "express";
 import helmet from "helmet";
 import { createQrSvgDataUrl } from "./lib/qr-data-url.mjs";
+import { createTicketStore } from "./lib/stream-tickets.mjs";
+import { createUrlSigner } from "./lib/signed-url.mjs";
+import { createSessionStore } from "./lib/client-sessions.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const port = Number(process.env.PORT || 3000);
-const APP_VERSION = "0.6.5";
+const APP_VERSION = JSON.parse(
+  readFileSync(path.join(__dirname, "package.json"), "utf8")
+).version;
 const MAX_CATALOG_ITEMS = 2000;
 const MAX_LIVE_ITEMS = 6000;
 const SESSION_TTL = 24 * 60 * 60 * 1000;
 const HLS_TICKET_TTL = 30 * 60 * 1000;
 const MAX_STREAM_TICKETS = 50_000;
+// Teto por dono da sessao. O teto global sozinho fazia a lista de um usuario
+// despejar o ticket do canal que outro usuario estava assistindo.
+const MAX_TICKETS_PER_OWNER = positiveIntegerSetting("MAX_TICKETS_PER_OWNER", 12_000);
+// Cada leitura acumula os pedacos e depois copia para um bloco contiguo: o pico
+// e cerca do dobro deste valor. Ajuste junto com a memoria do container.
+const MAX_CATALOG_BYTES = positiveIntegerSetting("MAX_CATALOG_BYTES", 24_000_000);
+const SHARED_TICKET_OWNER = "shared";
+const IMAGE_SIGNING_KEY = String(process.env.IMAGE_SIGNING_KEY || "").trim()
+  ? Buffer.from(String(process.env.IMAGE_SIGNING_KEY).trim(), "utf8")
+  : crypto.randomBytes(32);
+const NATIVE_DIRECT_KEY = String(process.env.NATIVE_DIRECT_KEY || "").trim();
+// off  — comportamento anterior, qualquer requisicao passa
+// warn — registra no log quem chega sem sessao, mas deixa passar (padrao)
+// on   — recusa requisicao de controle sem sessao valida
+const CLIENT_SESSION_MODE = ["off", "warn", "on"].includes(String(process.env.REQUIRE_CLIENT_SESSION || "").toLowerCase())
+  ? String(process.env.REQUIRE_CLIENT_SESSION).toLowerCase()
+  : "warn";
 const PAIRING_SESSION_TTL = Math.min(
   15 * 60 * 1000,
   Math.max(50, Number(process.env.PAIRING_SESSION_TTL_MS) || 5 * 60 * 1000)
@@ -36,6 +59,10 @@ const ANNUAL_PLAN = Object.freeze({
   intervalCount: 1
 });
 
+const IS_PRODUCTION = String(process.env.NODE_ENV || "").toLowerCase() === "production";
+// Fora de producao o http: continua liberado para testar fonte local sem TLS.
+const INSECURE_SOURCES = IS_PRODUCTION ? [] : ["http:"];
+
 app.disable("x-powered-by");
 app.set("trust proxy", 1);
 app.use(helmet({
@@ -44,9 +71,9 @@ app.use(helmet({
       defaultSrc: ["'self'"],
       scriptSrc: ["'self'", "https://imasdk.googleapis.com"],
       styleSrc: ["'self'"],
-      imgSrc: ["'self'", "data:", "blob:", "https:", "http:"],
-      mediaSrc: ["'self'", "blob:", "https:", "http:"],
-      connectSrc: ["'self'", "https:", "http:", "blob:"],
+      imgSrc: ["'self'", "data:", "blob:", "https:", ...INSECURE_SOURCES],
+      mediaSrc: ["'self'", "blob:", "https:", ...INSECURE_SOURCES],
+      connectSrc: ["'self'", "https:", "blob:", ...INSECURE_SOURCES],
       fontSrc: ["'self'"],
       frameSrc: ["'self'", "https://imasdk.googleapis.com", "https://*.doubleclick.net", "https://*.googlesyndication.com"],
       objectSrc: ["'none'"],
@@ -377,60 +404,42 @@ function normalizeBaseUrl(value) {
   return parseXtreamServer(value).base;
 }
 
-const streamTickets = new Map();
-const streamTicketByUrl = new Map();
+const ticketStore = createTicketStore({
+  maxPerOwner: MAX_TICKETS_PER_OWNER,
+  maxTotal: MAX_STREAM_TICKETS,
+  sessionTtlMs: SESSION_TTL,
+  hlsTtlMs: HLS_TICKET_TTL,
+  sharedOwner: SHARED_TICKET_OWNER
+});
+const imageSigner = createUrlSigner(IMAGE_SIGNING_KEY);
+const clientSessions = createSessionStore({
+  maxPerIp: positiveIntegerSetting("MAX_SESSIONS_PER_IP", 8),
+  maxRegistrationsPerSession: positiveIntegerSetting("MAX_REGISTRATIONS_PER_SESSION", 40_000)
+});
 const xtreamSessions = new Map();
 const pairingSessions = new Map();
 
-function deleteStreamTicket(token, entry = streamTickets.get(token)) {
-  if (!entry) return;
-  streamTickets.delete(token);
-  if (streamTicketByUrl.get(entry.ticketKey) === token) streamTicketByUrl.delete(entry.ticketKey);
+function signedImageUrl(rawUrl) {
+  const signed = imageSigner.sign(rawUrl);
+  return signed ? `/api/image/${signed}` : "";
 }
 
-function pruneStreamTickets(now = Date.now()) {
-  for (const [token, entry] of streamTickets) {
-    if (entry.expiresAt <= now) deleteStreamTicket(token, entry);
-  }
-  while (streamTickets.size >= MAX_STREAM_TICKETS) {
-    const oldest = streamTickets.entries().next().value;
-    if (!oldest) break;
-    deleteStreamTicket(oldest[0], oldest[1]);
-  }
-}
-
-function registerStream(remoteUrl, kind = "media") {
-  const url = String(remoteUrl || "").trim();
-  if (!url) return "";
-  const now = Date.now();
-  const ticketKey = `${kind}:${url}`;
-  const existingToken = streamTicketByUrl.get(ticketKey);
-  const existing = existingToken && streamTickets.get(existingToken);
-  if (existing && existing.expiresAt > now) return `/api/stream/${existingToken}`;
-  if (streamTickets.size >= MAX_STREAM_TICKETS) pruneStreamTickets(now);
-  const token = crypto.randomBytes(18).toString("base64url");
-  const ttlMs = kind === "hls" ? HLS_TICKET_TTL : SESSION_TTL;
-  const entry = { url, kind, ticketKey, ttlMs, createdAt: now, lastAccessAt: now, expiresAt: now + ttlMs };
-  streamTickets.set(token, entry);
-  streamTicketByUrl.set(ticketKey, token);
-  return `/api/stream/${token}`;
+function registerStream(remoteUrl, kind = "media", ownerId = SHARED_TICKET_OWNER) {
+  const token = ticketStore.register(remoteUrl, kind, ownerId);
+  return token ? `/api/stream/${token}` : "";
 }
 
 function activeStreamTicket(token) {
-  const normalizedToken = String(token || "");
-  const entry = streamTickets.get(normalizedToken);
-  if (!entry) return null;
-  if (entry.expiresAt <= Date.now()) {
-    deleteStreamTicket(normalizedToken, entry);
-    return null;
-  }
-  entry.lastAccessAt = Date.now();
-  entry.expiresAt = entry.lastAccessAt + (entry.ttlMs || SESSION_TTL);
-  // Keep the Map ordered by recent access so the cap evicts inactive segments
-  // before a channel that is still being watched.
-  streamTickets.delete(normalizedToken);
-  streamTickets.set(normalizedToken, entry);
-  return entry;
+  return ticketStore.active(token);
+}
+
+function allowDirectRoute(req) {
+  const nativeClient = /GATE-TV-NATIVE/i.test(String(req.headers["user-agent"] || ""));
+  if (!nativeClient) return false;
+  if (!NATIVE_DIRECT_KEY) return true;
+  const provided = String(req.get("x-gate-native-key") || "");
+  if (provided.length !== NATIVE_DIRECT_KEY.length) return false;
+  return crypto.timingSafeEqual(Buffer.from(provided, "utf8"), Buffer.from(NATIVE_DIRECT_KEY, "utf8"));
 }
 
 function streamTicketResponse(token, entry) {
@@ -480,16 +489,17 @@ function streamTypeFor(url, fallback = "auto") {
   return fallback;
 }
 
-function proxiedItem({ id, name, group, logo, url, streamType, fallbackUrl, fallbackStreamType, seriesId, sessionId, season, description, rating, year, genre, epgChannelId }) {
+function proxiedItem({ id, name, group, logo, url, streamType, fallbackUrl, fallbackStreamType, seriesId, sessionId, ownerId, season, description, rating, year, genre, epgChannelId }) {
+  const owner = ownerId || sessionId || SHARED_TICKET_OWNER;
   return {
     ...(id != null ? { id: String(id) } : {}),
     name: safeLabel(name),
     group: safeLabel(group || "Outros"),
-    logo: logo ? registerStream(String(logo).slice(0, 1800), "image") : "",
-    playUrl: url ? registerStream(url) : "",
+    logo: logo ? signedImageUrl(logo) : "",
+    playUrl: url ? registerStream(url, "media", owner) : "",
     streamType: streamType || (url ? streamTypeFor(url) : "auto"),
     ...(fallbackUrl ? {
-      fallbackPlayUrl: registerStream(fallbackUrl),
+      fallbackPlayUrl: registerStream(fallbackUrl, "media", owner),
       fallbackStreamType: fallbackStreamType || streamTypeFor(fallbackUrl)
     } : {}),
     ...(seriesId != null ? { seriesId: String(seriesId) } : {}),
@@ -503,7 +513,7 @@ function proxiedItem({ id, name, group, logo, url, streamType, fallbackUrl, fall
   };
 }
 
-function parseM3u(text, limit = MAX_CATALOG_ITEMS) {
+function parseM3u(text, ownerId = SHARED_TICKET_OWNER, limit = MAX_CATALOG_ITEMS) {
   const lines = String(text || "").split(/\r?\n/);
   const result = { channels: [], movies: [], series: [] };
   let metadata = null;
@@ -525,7 +535,7 @@ function parseM3u(text, limit = MAX_CATALOG_ITEMS) {
       const kind = pathname.includes("/movie/") || /filmes?|movies?|vod/.test(group)
         ? "movies"
         : pathname.includes("/series/") || /s[eé]ries?|novelas?|animes?/.test(group) ? "series" : "channels";
-      result[kind].push(proxiedItem({ ...metadata, url: line }));
+      result[kind].push(proxiedItem({ ...metadata, url: line, ownerId }));
       metadata = null;
       total += 1;
       if (total >= limit) break;
@@ -575,7 +585,7 @@ async function connectXtream({ serverUrl, username, password, source = "xtream" 
 
   const [categoriesResult, liveResult] = await Promise.allSettled([
     safeFetch(xtreamApi(base, username, password, "get_live_categories", apiPath), { maxBytes: 3_000_000, asJson: true, timeoutMs: 35_000 }),
-    safeFetch(xtreamApi(base, username, password, "get_live_streams", apiPath), { maxBytes: 42_000_000, asJson: true, timeoutMs: 45_000 })
+    safeFetch(xtreamApi(base, username, password, "get_live_streams", apiPath), { maxBytes: MAX_CATALOG_BYTES, asJson: true, timeoutMs: 45_000 })
   ]);
   const live = liveResult.status === "fulfilled" ? payloadArray(liveResult.value, ["live_streams", "streams", "channels", "data"]) : [];
   if (!live.length) {
@@ -590,6 +600,7 @@ async function connectXtream({ serverUrl, username, password, source = "xtream" 
   const sessionId = crypto.randomBytes(18).toString("base64url");
   xtreamSessions.set(sessionId, { base, username, password, apiPath, expiresAt: Date.now() + SESSION_TTL });
   const channels = live.slice(0, MAX_LIVE_ITEMS).map((item) => proxiedItem({
+    ownerId: sessionId,
     id: item.stream_id ?? item.id ?? item.num,
     name: item.name || item.title,
     logo: item.stream_icon || item.logo || item.tvg_logo,
@@ -651,12 +662,12 @@ function getXtreamSession(sessionId) {
   return session;
 }
 
-function rewriteManifest(text, baseUrl) {
+function rewriteManifest(text, baseUrl, ownerId = SHARED_TICKET_OWNER) {
   return String(text).split(/\r?\n/).map((rawLine) => {
     const line = rawLine.trim();
     if (!line) return rawLine;
-    if (!line.startsWith("#")) return registerStream(new URL(line, baseUrl).toString(), "hls");
-    return rawLine.replace(/URI="([^"]+)"/g, (_match, uri) => `URI="${registerStream(new URL(uri, baseUrl).toString(), "hls")}"`);
+    if (!line.startsWith("#")) return registerStream(new URL(line, baseUrl).toString(), "hls", ownerId);
+    return rawLine.replace(/URI="([^"]+)"/g, (_match, uri) => `URI="${registerStream(new URL(uri, baseUrl).toString(), "hls", ownerId)}"`);
   }).join("\n");
 }
 
@@ -684,7 +695,7 @@ function publicPairingSession(entry) {
 }
 
 function pairingBaseUrl(req) {
-  const production = String(process.env.NODE_ENV || "").toLowerCase() === "production";
+  const production = IS_PRODUCTION;
   const railwayDomain = String(process.env.RAILWAY_PUBLIC_DOMAIN || "").trim();
   const railwayUrl = railwayDomain
     ? (/^https?:\/\//i.test(railwayDomain) ? railwayDomain : `https://${railwayDomain}`)
@@ -760,10 +771,11 @@ function billingConfiguration() {
   };
 }
 
-function respondWithCheckout(_req, res) {
+function respondWithCheckout(_req, res, context = {}) {
   res.setHeader("cache-control", "no-store");
   const configuration = billingConfiguration();
   return res.status(503).json({
+    ...(context.mac ? { mac: context.mac } : {}),
     status: "payment_not_configured",
     code: configuration.providerConfigured ? "ACTIVATION_PIPELINE_REQUIRED" : "PAYMENT_NOT_CONFIGURED",
     error: configuration.providerConfigured
@@ -772,6 +784,50 @@ function respondWithCheckout(_req, res) {
     plan: ANNUAL_PLAN
   });
 }
+
+// As rotas de controle abrem lista, conectam fonte e registram link — sao elas
+// que transformavam o servidor em proxy de midia gratuito. A rota de midia
+// (/api/stream/:token) fica de fora de proposito: o elemento <video> nao envia
+// cabecalho proprio, e ali o ticket, curto e imprevisivel, ja e a credencial.
+const CONTROL_ROUTES = [
+  "/api/m3u/parse",
+  "/api/xtream/connect",
+  "/api/xtream/catalog",
+  "/api/xtream/epg",
+  "/api/xtream/details",
+  "/api/xtream/series",
+  "/api/streams/register",
+  "/api/stream/register",
+  "/api/portal/validate"
+];
+
+function requireClientSession(req, res, next) {
+  const token = String(req.get("x-gate-client") || "");
+  const session = token ? clientSessions.verify(token) : null;
+  if (session) {
+    req.clientToken = token;
+    return next();
+  }
+  if (CLIENT_SESSION_MODE === "on") {
+    res.setHeader("cache-control", "no-store");
+    return res.status(401).json({
+      error: "Sessao do aplicativo ausente ou expirada. Recarregue a pagina.",
+      code: "CLIENT_SESSION_REQUIRED"
+    });
+  }
+  if (CLIENT_SESSION_MODE === "warn") {
+    console.warn(`CLIENT_SESSION_MISSING path=${req.path} ip=${req.ip || "unknown"} ua=${JSON.stringify(String(req.get("user-agent") || "").slice(0, 120))}`);
+  }
+  return next();
+}
+
+for (const route of CONTROL_ROUTES) app.use(route, requireClientSession);
+
+app.post("/api/session", sensitiveRateLimit("session_create", 20, 60_000), (req, res) => {
+  const issued = clientSessions.issue(req.ip);
+  res.setHeader("cache-control", "no-store");
+  return res.status(201).json({ ...issued, mode: CLIENT_SESSION_MODE });
+});
 
 app.post("/api/client-diagnostics", (req, res) => {
   const platform = String(req.body?.platform || "unknown").replace(/[^a-z0-9_-]/gi, "").slice(0, 30);
@@ -911,9 +967,10 @@ app.post("/api/m3u/parse", async (req, res) => {
       const serverUrl = `${parsed.protocol}//${parsed.host}`;
       return res.json(await connectXtream({ serverUrl, username, password, source: "xtream-m3u" }));
     }
-    const text = await safeFetch(url, { maxBytes: 38_000_000, timeoutMs: 50_000 });
+    const text = await safeFetch(url, { maxBytes: MAX_CATALOG_BYTES, timeoutMs: 50_000 });
     if (!/^#EXTM3U/m.test(text)) return res.status(422).json({ error: "O arquivo não parece ser uma lista M3U válida." });
-    const catalog = parseM3u(text);
+    const listOwner = crypto.randomBytes(18).toString("base64url");
+    const catalog = parseM3u(text, listOwner);
     const count = catalog.channels.length + catalog.movies.length + catalog.series.length;
     if (!count) return res.status(422).json({ error: "Nenhum item reproduzível foi encontrado na lista." });
     return res.json({ source: "m3u", count, counts: { live: catalog.channels.length, movies: catalog.movies.length, series: catalog.series.length }, ...catalog });
@@ -942,13 +999,14 @@ app.post("/api/xtream/catalog", async (req, res) => {
     const contentAction = kind === "movies" ? "get_vod_streams" : "get_series";
     const [categoriesResult, itemsResult] = await Promise.allSettled([
       safeFetch(xtreamApi(session.base, session.username, session.password, categoryAction, session.apiPath), { maxBytes: 3_000_000, asJson: true, timeoutMs: 35_000 }),
-      safeFetch(xtreamApi(session.base, session.username, session.password, contentAction, session.apiPath), { maxBytes: 64_000_000, asJson: true, timeoutMs: 55_000 })
+      safeFetch(xtreamApi(session.base, session.username, session.password, contentAction, session.apiPath), { maxBytes: MAX_CATALOG_BYTES, asJson: true, timeoutMs: 55_000 })
     ]);
     const rawItems = itemsResult.status === "fulfilled" ? payloadArray(itemsResult.value, kind === "movies" ? ["vod_streams", "movies", "streams", "data"] : ["series", "items", "data"]) : [];
     if (!rawItems.length && itemsResult.status === "rejected") throw itemsResult.reason;
     const categories = categoryMap(categoriesResult.status === "fulfilled" ? categoriesResult.value : []);
     const items = rawItems.slice(0, MAX_CATALOG_ITEMS).map((item) => {
       const common = {
+        ownerId: req.body.sessionId,
         id: kind === "movies" ? (item.stream_id ?? item.vod_id ?? item.movie_id ?? item.id) : (item.series_id ?? item.id),
         name: item.name || item.title,
         logo: kind === "movies" ? (item.stream_icon || item.cover || item.cover_big || item.logo) : (item.cover || item.cover_big || item.stream_icon || item.logo),
@@ -1002,13 +1060,14 @@ app.post("/api/xtream/epg", async (req, res) => {
   }
 });
 
-function seriesPayload(session, info) {
+function seriesPayload(session, info, ownerId = SHARED_TICKET_OWNER) {
   const seriesInfo = info?.info || info?.series_info || {};
   const seasonEntries = Array.isArray(info?.episodes) ? [["1", info.episodes]] : Object.entries(info?.episodes || {});
   const episodes = seasonEntries.flatMap(([season, entries]) => payloadArray(entries, ["episodes", "items", "data"]).map((episode) => {
     const extension = String(episode.container_extension || episode.extension || "mp4").replace(/[^a-z0-9]/gi, "") || "mp4";
     const episodeId = episode.id ?? episode.stream_id ?? episode.episode_id;
     return proxiedItem({
+      ownerId,
       id: episodeId,
       name: episode.title || episode.name || `Episódio ${episode.episode_num || episodeId}`,
       group: `Temporada ${episode.season ?? season}`,
@@ -1027,7 +1086,7 @@ function seriesPayload(session, info) {
     rating: safeLabel(seriesInfo.rating || "", ""),
     genre: safeLabel(seriesInfo.genre || "", ""),
     year: safeLabel(seriesInfo.releaseDate || seriesInfo.releasedate || seriesInfo.year || "", ""),
-    logo: seriesInfo.cover || seriesInfo.cover_big ? registerStream(seriesInfo.cover || seriesInfo.cover_big, "image") : "",
+    logo: seriesInfo.cover || seriesInfo.cover_big ? signedImageUrl(seriesInfo.cover || seriesInfo.cover_big) : "",
     episodes: episodes.slice(0, 700)
   };
 }
@@ -1039,8 +1098,8 @@ app.post("/api/xtream/details", async (req, res) => {
     const itemId = String(req.body?.itemId || "").replace(/[^0-9]/g, "");
     if (!itemId) return res.status(400).json({ error: "Conteúdo inválido." });
     if (kind === "series") {
-      const info = await safeFetch(`${xtreamApi(session.base, session.username, session.password, "get_series_info", session.apiPath)}&series_id=${encodeURIComponent(itemId)}`, { maxBytes: 18_000_000, asJson: true, timeoutMs: 45_000 });
-      const payload = seriesPayload(session, info);
+      const info = await safeFetch(`${xtreamApi(session.base, session.username, session.password, "get_series_info", session.apiPath)}&series_id=${encodeURIComponent(itemId)}`, { maxBytes: Math.min(MAX_CATALOG_BYTES, 18_000_000), asJson: true, timeoutMs: 45_000 });
+      const payload = seriesPayload(session, info, req.body.sessionId);
       return res.json({
         name: payload.name,
         description: payload.description,
@@ -1061,7 +1120,7 @@ app.post("/api/xtream/details", async (req, res) => {
       rating: safeLabel(info.rating || info.rating_5based || movie.rating || "", ""),
       genre: safeLabel(info.genre || movie.genre || "", ""),
       year: safeLabel(info.year || info.releasedate || info.releaseDate || movie.year || "", ""),
-      logo: logo ? registerStream(logo, "image") : ""
+      logo: logo ? signedImageUrl(logo) : ""
     });
   } catch (error) {
     return res.status(422).json({ error: error.message || "Não foi possível carregar os detalhes." });
@@ -1073,8 +1132,8 @@ app.post("/api/xtream/series", async (req, res) => {
     const session = getXtreamSession(req.body?.sessionId);
     const seriesId = String(req.body?.seriesId || "").replace(/[^0-9]/g, "");
     if (!seriesId) return res.status(400).json({ error: "Série inválida." });
-    const info = await safeFetch(`${xtreamApi(session.base, session.username, session.password, "get_series_info", session.apiPath)}&series_id=${encodeURIComponent(seriesId)}`, { maxBytes: 18_000_000, asJson: true, timeoutMs: 45_000 });
-    return res.json(seriesPayload(session, info));
+    const info = await safeFetch(`${xtreamApi(session.base, session.username, session.password, "get_series_info", session.apiPath)}&series_id=${encodeURIComponent(seriesId)}`, { maxBytes: Math.min(MAX_CATALOG_BYTES, 18_000_000), asJson: true, timeoutMs: 45_000 });
+    return res.json(seriesPayload(session, info, req.body.sessionId));
   } catch (error) {
     return res.status(422).json({ error: error.message || "Não foi possível carregar os episódios." });
   }
@@ -1091,7 +1150,8 @@ app.post("/api/streams/register", async (req, res) => {
       if (!checkedHosts.has(hostKey)) checkedHosts.set(hostKey, validateRemoteUrl(parsed.toString()));
     }
     await Promise.all(checkedHosts.values());
-    return res.json({ items: items.map((item) => proxiedItem(item)) });
+    const owner = String(req.body?.sessionId || req.clientToken || "") || crypto.randomBytes(18).toString("base64url");
+    return res.json({ items: items.map((item) => proxiedItem({ ...item, ownerId: owner })) });
   } catch (error) {
     return res.status(422).json({ error: error.message || "Não foi possível preparar os itens." });
   }
@@ -1100,7 +1160,8 @@ app.post("/api/streams/register", async (req, res) => {
 app.post("/api/stream/register", async (req, res) => {
   try {
     const parsed = await validateRemoteUrl(req.body?.url);
-    return res.json({ playUrl: registerStream(parsed.toString()), streamType: streamTypeFor(parsed.toString()) });
+    const owner = String(req.body?.sessionId || req.clientToken || "") || crypto.randomBytes(18).toString("base64url");
+    return res.json({ playUrl: registerStream(parsed.toString(), "media", owner), streamType: streamTypeFor(parsed.toString()) });
   } catch (error) {
     return res.status(422).json({ error: error.message || "Não foi possível preparar o link." });
   }
@@ -1117,8 +1178,13 @@ app.get("/api/stream/:token", async (req, res) => {
   const entry = activeStreamTicket(req.params.token);
   if (!entry) return res.status(404).json({ error: "Este link de reprodução expirou. Conecte a lista novamente." });
   res.setHeader("x-gate-ticket-expires-at", new Date(entry.expiresAt).toISOString());
-  const nativeClient = /GATE-TV-NATIVE/i.test(String(req.headers["user-agent"] || ""));
-  if (entry.kind !== "image" && (nativeClient || req.query.direct === "1")) {
+  // A rota direta devolve a URL da fonte, que em Xtream carrega usuario e senha
+  // no caminho. O gatilho por query foi removido: nenhum cliente o usava e ele
+  // entregava as credenciais a qualquer visitante. Quando NATIVE_DIRECT_KEY
+  // estiver configurada, so o cliente nativo que provar posse da chave recebe o
+  // desvio; sem a chave, mantem-se o comportamento anterior por compatibilidade
+  // com o APK ja publicado.
+  if (entry.kind !== "image" && allowDirectRoute(req)) {
     res.setHeader("cache-control", "private, no-store");
     res.setHeader("x-gate-route", "direct");
     return res.redirect(307, entry.url);
@@ -1155,7 +1221,7 @@ app.get("/api/stream/:token", async (req, res) => {
       try {
         const bytes = await readLimited(response, 4_000_000);
         const text = new TextDecoder().decode(bytes);
-        res.type("application/vnd.apple.mpegurl").send(rewriteManifest(text, remote.finalUrl));
+        res.type("application/vnd.apple.mpegurl").send(rewriteManifest(text, remote.finalUrl, entry.ownerId));
       } finally { remote.clearTimer(); }
       return;
     }
@@ -1172,6 +1238,26 @@ app.get("/api/stream/:token", async (req, res) => {
   } catch (error) {
     if (!res.headersSent) res.status(502).json({ error: error.message || "A fonte não respondeu ao player." });
     else res.end();
+  }
+});
+
+app.get("/api/image/:signature/:payload", async (req, res) => {
+  const rawUrl = imageSigner.verify(req.params.signature, req.params.payload);
+  if (!rawUrl) return res.status(403).json({ error: "Imagem nao autorizada." });
+  try {
+    const remote = await openRemote(rawUrl, {
+      headers: { accept: "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8" },
+      timeoutMs: 15_000
+    });
+    try {
+      if (!remote.response.ok) return res.status(remote.response.status).end();
+      const bytes = await readLimited(remote.response, 12_000_000);
+      res.setHeader("cache-control", "public, max-age=86400");
+      res.setHeader("content-type", detectedImageContentType(bytes, remote.finalUrl || rawUrl, remote.response.headers.get("content-type") || ""));
+      return res.send(Buffer.from(bytes));
+    } finally { remote.clearTimer(); }
+  } catch {
+    return res.status(502).end();
   }
 });
 
@@ -1197,7 +1283,8 @@ app.post("/api/renewals", sensitiveRateLimit("billing_checkout", 10, 10 * 60_000
 
 setInterval(() => {
   const now = Date.now();
-  pruneStreamTickets(now);
+  ticketStore.prune(now);
+  clientSessions.prune(now);
   for (const [id, session] of xtreamSessions) if (session.expiresAt <= now) xtreamSessions.delete(id);
   for (const [code, entry] of pairingSessions) {
     expirePairingSession(entry, now);
@@ -1232,9 +1319,30 @@ app.get("/{*path}", (_req, res) => {
   res.setHeader("cache-control", "no-cache, no-store, must-revalidate");
   res.sendFile(path.join(__dirname, "public/index.html"));
 });
-app.use((error, _req, res, _next) => res.status(500).json({ error: error?.message || "Erro interno." }));
+app.use((error, _req, res, _next) => {
+  const reference = crypto.randomBytes(6).toString("hex");
+  console.error(`UNHANDLED_ERROR ref=${reference}`, error);
+  res.status(500).json({ error: "Erro interno. Tente novamente.", reference });
+});
 
 const isMainModule = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
-if (isMainModule) app.listen(port, "0.0.0.0", () => console.log(`GATE IPTV PLAYER online na porta ${port}`));
+if (isMainModule) {
+  const server = app.listen(port, "0.0.0.0", () => console.log(`GATE IPTV PLAYER ${APP_VERSION} online na porta ${port}`));
+  // A Railway envia SIGTERM a cada deploy. Sem isto, quem esta assistindo perde
+  // a imagem no meio da transmissao em vez de reconectar.
+  const shutdown = (signal) => {
+    console.log(`Encerrando por ${signal}. Drenando conexoes…`);
+    const forced = setTimeout(() => {
+      console.warn("Prazo de drenagem esgotado. Encerrando a forca.");
+      process.exit(1);
+    }, 15_000);
+    forced.unref();
+    server.close(() => {
+      clearTimeout(forced);
+      process.exit(0);
+    });
+  };
+  for (const signal of ["SIGTERM", "SIGINT"]) process.once(signal, () => shutdown(signal));
+}
 
 export { app };

@@ -4,6 +4,11 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { readFileSync } from "node:fs";
+
+// Versao unica, lida do package.json — evita que os manifestos voltem a divergir.
+const APP_VERSION = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
+
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const source = fs.readFileSync(
   path.join(root, "platforms/android-native/app/src/main/java/com/gateone/app/gateiptvplayer/MainActivity.java"),
@@ -26,13 +31,13 @@ const bootReceiver = fs.readFileSync(
   "utf8"
 );
 
-test("publica o motor Android TV como versão 0.6.5 coerente", () => {
-  assert.match(appGradle, /versionCode 65/);
-  assert.match(appGradle, /versionName '0\.6\.5'/);
+test("publica o motor Android TV na mesma versão do package.json", () => {
+  assert.match(appGradle, /versionCode \d+/);
+  assert.ok(appGradle.includes(`versionName '${APP_VERSION}'`), "build.gradle deve seguir o package.json");
   assert.match(appGradle, /splits\s*\{[\s\S]*abi\s*\{/);
   assert.match(appGradle, /include 'armeabi-v7a', 'arm64-v8a'/);
   assert.match(appGradle, /universalApk false/);
-  assert.match(source, /APP_VERSION = "0\.6\.5"/);
+  assert.ok(source.includes(`APP_VERSION = "${APP_VERSION}"`), "MainActivity deve usar a versão do package.json");
   assert.match(source, /GATE-TV-NATIVE\/" \+ APP_VERSION/);
   assert.match(source, /GATE-IPTV-PLAYER\/" \+ APP_VERSION/);
   assert.doesNotMatch(source, /\.isBlank\(\)/, "isBlank não existe em vários Android TV antigos");
