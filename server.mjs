@@ -12,6 +12,7 @@ import helmet from "helmet";
 import { createQrSvgDataUrl } from "./lib/qr-data-url.mjs";
 import { createTicketStore } from "./lib/stream-tickets.mjs";
 import { createUrlSigner } from "./lib/signed-url.mjs";
+import { createSessionStore } from "./lib/client-sessions.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -35,6 +36,12 @@ const IMAGE_SIGNING_KEY = String(process.env.IMAGE_SIGNING_KEY || "").trim()
   ? Buffer.from(String(process.env.IMAGE_SIGNING_KEY).trim(), "utf8")
   : crypto.randomBytes(32);
 const NATIVE_DIRECT_KEY = String(process.env.NATIVE_DIRECT_KEY || "").trim();
+// off  — comportamento anterior, qualquer requisicao passa
+// warn — registra no log quem chega sem sessao, mas deixa passar (padrao)
+// on   — recusa requisicao de controle sem sessao valida
+const CLIENT_SESSION_MODE = ["off", "warn", "on"].includes(String(process.env.REQUIRE_CLIENT_SESSION || "").toLowerCase())
+  ? String(process.env.REQUIRE_CLIENT_SESSION).toLowerCase()
+  : "warn";
 const PAIRING_SESSION_TTL = Math.min(
   15 * 60 * 1000,
   Math.max(50, Number(process.env.PAIRING_SESSION_TTL_MS) || 5 * 60 * 1000)
@@ -405,6 +412,10 @@ const ticketStore = createTicketStore({
   sharedOwner: SHARED_TICKET_OWNER
 });
 const imageSigner = createUrlSigner(IMAGE_SIGNING_KEY);
+const clientSessions = createSessionStore({
+  maxPerIp: positiveIntegerSetting("MAX_SESSIONS_PER_IP", 8),
+  maxRegistrationsPerSession: positiveIntegerSetting("MAX_REGISTRATIONS_PER_SESSION", 40_000)
+});
 const xtreamSessions = new Map();
 const pairingSessions = new Map();
 
@@ -774,6 +785,50 @@ function respondWithCheckout(_req, res, context = {}) {
   });
 }
 
+// As rotas de controle abrem lista, conectam fonte e registram link — sao elas
+// que transformavam o servidor em proxy de midia gratuito. A rota de midia
+// (/api/stream/:token) fica de fora de proposito: o elemento <video> nao envia
+// cabecalho proprio, e ali o ticket, curto e imprevisivel, ja e a credencial.
+const CONTROL_ROUTES = [
+  "/api/m3u/parse",
+  "/api/xtream/connect",
+  "/api/xtream/catalog",
+  "/api/xtream/epg",
+  "/api/xtream/details",
+  "/api/xtream/series",
+  "/api/streams/register",
+  "/api/stream/register",
+  "/api/portal/validate"
+];
+
+function requireClientSession(req, res, next) {
+  const token = String(req.get("x-gate-client") || "");
+  const session = token ? clientSessions.verify(token) : null;
+  if (session) {
+    req.clientToken = token;
+    return next();
+  }
+  if (CLIENT_SESSION_MODE === "on") {
+    res.setHeader("cache-control", "no-store");
+    return res.status(401).json({
+      error: "Sessao do aplicativo ausente ou expirada. Recarregue a pagina.",
+      code: "CLIENT_SESSION_REQUIRED"
+    });
+  }
+  if (CLIENT_SESSION_MODE === "warn") {
+    console.warn(`CLIENT_SESSION_MISSING path=${req.path} ip=${req.ip || "unknown"} ua=${JSON.stringify(String(req.get("user-agent") || "").slice(0, 120))}`);
+  }
+  return next();
+}
+
+for (const route of CONTROL_ROUTES) app.use(route, requireClientSession);
+
+app.post("/api/session", sensitiveRateLimit("session_create", 20, 60_000), (req, res) => {
+  const issued = clientSessions.issue(req.ip);
+  res.setHeader("cache-control", "no-store");
+  return res.status(201).json({ ...issued, mode: CLIENT_SESSION_MODE });
+});
+
 app.post("/api/client-diagnostics", (req, res) => {
   const platform = String(req.body?.platform || "unknown").replace(/[^a-z0-9_-]/gi, "").slice(0, 30);
   const kind = String(req.body?.kind || "event").replace(/[^a-z0-9_-]/gi, "").slice(0, 40);
@@ -1095,7 +1150,7 @@ app.post("/api/streams/register", async (req, res) => {
       if (!checkedHosts.has(hostKey)) checkedHosts.set(hostKey, validateRemoteUrl(parsed.toString()));
     }
     await Promise.all(checkedHosts.values());
-    const owner = String(req.body?.sessionId || "") || crypto.randomBytes(18).toString("base64url");
+    const owner = String(req.body?.sessionId || req.clientToken || "") || crypto.randomBytes(18).toString("base64url");
     return res.json({ items: items.map((item) => proxiedItem({ ...item, ownerId: owner })) });
   } catch (error) {
     return res.status(422).json({ error: error.message || "Não foi possível preparar os itens." });
@@ -1105,7 +1160,7 @@ app.post("/api/streams/register", async (req, res) => {
 app.post("/api/stream/register", async (req, res) => {
   try {
     const parsed = await validateRemoteUrl(req.body?.url);
-    const owner = String(req.body?.sessionId || "") || crypto.randomBytes(18).toString("base64url");
+    const owner = String(req.body?.sessionId || req.clientToken || "") || crypto.randomBytes(18).toString("base64url");
     return res.json({ playUrl: registerStream(parsed.toString(), "media", owner), streamType: streamTypeFor(parsed.toString()) });
   } catch (error) {
     return res.status(422).json({ error: error.message || "Não foi possível preparar o link." });
@@ -1229,6 +1284,7 @@ app.post("/api/renewals", sensitiveRateLimit("billing_checkout", 10, 10 * 60_000
 setInterval(() => {
   const now = Date.now();
   ticketStore.prune(now);
+  clientSessions.prune(now);
   for (const [id, session] of xtreamSessions) if (session.expiresAt <= now) xtreamSessions.delete(id);
   for (const [code, entry] of pairingSessions) {
     expirePairingSession(entry, now);
